@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-multipart
+pymupdf
+python-docx
+pdf2docx
+chromadb
+sentence-transformers
+rapidocr
+openai
+python-dotenv

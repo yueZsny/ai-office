@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  ai-service:
+    build: ./ai-service
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./shared-data:/app/data      # 与 backend 共享同一目录，实现文件流转
+    env_file: ./ai-service/.env
+
+  backend:
+    build: ./backend
+    ports:
+      - "3001:3001"
+    depends_on:
+      - ai-service
+    environment:
+      - AI_SERVICE_URL=http://ai-service:8000
+    volumes:
+      - ./shared-data:/app/data      # 与 ai-service 共享同一目录
+      - ./backend/data:/app/backend-data  # 挂载元信息（files.json）
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

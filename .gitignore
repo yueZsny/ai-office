@@ -1,0 +1,48 @@
+# ===== 依赖与构建产物 =====
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== 环境变量（密钥不入库）=====
+.env
+.env.*
+!.env.example
+*.local
+
+# ===== 共享数据卷（上传文件 / 处理结果 / 向量库，运行时生成，不入库）=====
+shared-data/uploads/*
+shared-data/processed/*
+shared-data/vector/*
+!shared-data/uploads/.gitkeep
+!shared-data/processed/.gitkeep
+!shared-data/vector/.gitkeep
+
+# ===== 后端运行时数据（上传文件、处理结果、元信息）=====
+backend/data/uploads/*
+backend/data/processed/*
+backend/data/files.json
+!backend/data/uploads/.gitkeep
+!backend/data/processed/.gitkeep
+
+# ===== AI 服务本地模型（启动时自动下载，不入库）=====
+ai-service/data/models/
+
+# ===== 日志 =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===== 编辑器 / IDE / 系统文件 =====
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
