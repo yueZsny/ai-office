@@ -65,6 +65,69 @@ export const fileService = {
     return meta;
   },
 
+  /**
+   * 转换/生成类流程：原始文件已由调用方（路由）落盘，这里登记一条带结果路径的元信息
+   * - 原始文件与结果文件分别保存（保留原始文件供回退下载）
+   * - status 直接置为 'converted'
+   */
+  async saveAsConverted(
+    originalFile: Express.Multer.File,
+    processedPath: string
+  ): Promise<FileMeta> {
+    const fileId = generateId();
+    const ext = extname(originalFile.originalname);
+    const storedName = `${fileId}${ext}`;
+    const originalPath = path.join(env.uploadDir, storedName);
+
+    await fs.mkdir(env.uploadDir, { recursive: true });
+    await fs.writeFile(originalPath, originalFile.buffer);
+
+    const meta: FileMeta = {
+      fileId,
+      filename: originalFile.originalname,
+      type: ext === '.docx' ? 'docx' : 'pdf',
+      size: originalFile.size,
+      status: 'converted',
+      originalPath,
+      processedPath,
+      createdAt: new Date().toISOString(),
+    };
+
+    const all = await readMeta();
+    all.push(meta);
+    await writeMeta(all);
+
+    return meta;
+  },
+
+  /**
+   * 生成类流程（无原始上传文件）：直接登记一条含结果路径的元信息
+   * - fileId 采用调用方传入的 id（与 ai-service 结果关联）
+   * - status 置为 'converted'（结果文件已就绪，可下载）
+   */
+  async saveGenerated(
+    fileId: string,
+    filename: string,
+    processedPath: string
+  ): Promise<FileMeta> {
+    const meta: FileMeta = {
+      fileId,
+      filename,
+      type: 'docx',
+      size: 0,
+      status: 'converted',
+      originalPath: processedPath,
+      processedPath,
+      createdAt: new Date().toISOString(),
+    };
+
+    const all = await readMeta();
+    all.push(meta);
+    await writeMeta(all);
+
+    return meta;
+  },
+
   /** 按 fileId 查询元信息，不存在时抛 NotFoundError（404） */
   async getById(fileId: string): Promise<FileMeta> {
     const all = await readMeta();

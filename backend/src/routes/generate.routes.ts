@@ -4,10 +4,19 @@
  * 响应：{ downloadUrl }
  */
 import { Router } from 'express';
+import { generateService } from '../services/generate.service';
 
 export const generateRouter = Router();
 
-// TODO(功能阶段): 实现生成（校验 title/outline → 调 generate.service → 调 ai-client.generate）
-generateRouter.post('/doc', (_req, res) => {
-  res.status(501).json({ error: { message: '该功能尚未实现' } });
+generateRouter.post('/doc', async (req, res, next) => {
+  try {
+    const { title, outline } = req.body as {
+      title?: string;
+      outline?: string[];
+    };
+    const result = await generateService.generate(title ?? '', outline ?? []);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
 });

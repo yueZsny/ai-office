@@ -4,15 +4,37 @@
  * - POST /api/qa/summary  生成摘要：{ fileId } → { summary }
  */
 import { Router } from 'express';
+import { qaService } from '../services/qa.service';
+import type { ChatMessage } from '../types';
 
 export const qaRouter = Router();
 
-// TODO(功能阶段): 实现问答（校验 fileId → 调 qa.service → 调 ai-client.qa）
-qaRouter.post('/ask', (_req, res) => {
-  res.status(501).json({ error: { message: '该功能尚未实现' } });
+interface AskBody {
+  fileId?: string;
+  question?: string;
+  history?: ChatMessage[];
+}
+
+qaRouter.post('/ask', async (req, res, next) => {
+  try {
+    const { fileId, question, history } = req.body as AskBody;
+    const result = await qaService.ask(
+      fileId ?? '',
+      question ?? '',
+      history
+    );
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
 });
 
-// TODO(功能阶段): 实现摘要（校验 fileId → 调 qa.service → 调 ai-client.summary）
-qaRouter.post('/summary', (_req, res) => {
-  res.status(501).json({ error: { message: '该功能尚未实现' } });
+qaRouter.post('/summary', async (req, res, next) => {
+  try {
+    const { fileId } = req.body as { fileId?: string };
+    const result = await qaService.summarize(fileId ?? '');
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
 });

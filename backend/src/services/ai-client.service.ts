@@ -90,13 +90,13 @@ export const aiClient = {
     fileId: string;
     question: string;
     history?: { role: 'user' | 'assistant'; content: string }[];
-  }): Promise<{ answer: string; sources: { index: number; text: string }[] }> {
+  }): Promise<{ answer: string; sources: { chunkIndex: number; text: string }[] }> {
     const res = await request('/ai/qa', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return (await res.json()) as { answer: string; sources: { index: number; text: string }[] };
+    return (await res.json()) as { answer: string; sources: { chunkIndex: number; text: string }[] };
   },
 
   /** 生成摘要：{ fileId } → { summary } */

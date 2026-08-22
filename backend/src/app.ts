@@ -9,6 +9,9 @@ import { errorHandler } from './middleware/error.middleware';
 import { healthRouter } from './routes/health.routes';
 import { uploadRouter } from './routes/upload.routes';
 import { downloadRouter } from './routes/download.routes';
+import { qaRouter } from './routes/qa.routes';
+import { convertRouter } from './routes/convert.routes';
+import { generateRouter } from './routes/generate.routes';
 
 export const app = express();
 
@@ -22,11 +25,9 @@ app.use('/api/health', healthRouter);
 // ---- 业务路由 ----
 app.use('/api/upload', uploadRouter);
 app.use('/api/download', downloadRouter);
-
-// TODO(功能阶段): 按需注册其余路由
-// app.use('/api/qa', qaRouter);
-// app.use('/api/convert', convertRouter);
-// app.use('/api/generate', generateRouter);
+app.use('/api/qa', qaRouter);
+app.use('/api/convert', convertRouter);
+app.use('/api/generate', generateRouter);
 
 // 统一错误处理（必须放在所有路由之后）
 app.use(errorHandler);
