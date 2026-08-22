@@ -133,3 +133,24 @@ body {
   font-size: 13px;
   color: var(--color-primary);
 }
+
+/* 结果下载（ResultDownload.tsx）：图标 + 文件名 + 下载按钮，整体居中 */
+.result-download {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+}
+
+.result-download__icon {
+  font-size: 48px;
+  color: var(--color-primary);
+}
+
+.result-download__filename {
+  font-size: 14px;
+  color: var(--color-text-main);
+  word-break: break-all;
+  text-align: center;
+}
