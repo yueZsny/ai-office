@@ -43,9 +43,9 @@ async def parse_document(file: UploadFile = File(...)):
     except ValueError as e:
         return JSONResponse(status_code=400, content={"error": {"message": str(e)}})
 
-    # 4. 分块 + 向量化入库（供 /ai/qa、/ai/summary 按 fileId 检索）
+    # 4. 分块 + 向量化入库（供 /ai/qa、/ai/summary 按 fileId 检索；filename 供引用展示）
     try:
-        stored = build_and_store(file_id, result.pages)
+        stored = build_and_store(file_id, result.pages, filename=filename)
     except Exception as e:
         return JSONResponse(
             status_code=500,

@@ -1,6 +1,9 @@
 /**
  * 文件下载路由：GET /api/download/:fileId
  * 根据 fileId 返回处理结果文件流（无 processedPath 时回退返回原文件）
+ * - 默认：attachment 下载（现有行为）
+ * - ?inline=1：内联预览（Content-Disposition: inline + 按扩展名 Content-Type，
+ *   attachment 头在 iframe/embed 中会直接触发下载，无法内嵌预览）
  */
 import { Router } from 'express';
 import { createReadStream } from 'fs';
@@ -16,6 +19,16 @@ function buildDownloadName(filename: string, filePath: string): string {
   const resultExt = extname(filePath); // .docx 等
   const base = filename.replace(/\.\w+$/, '');
   return resultExt ? `${base}${resultExt}` : filename;
+}
+
+/** 按扩展名推断内联预览 Content-Type（?inline=1 预览模式用） */
+function previewContentType(filePath: string): string {
+  const types: Record<string, string> = {
+    '.pdf': 'application/pdf',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.doc': 'application/msword',
+  };
+  return types[extname(filePath)] ?? 'application/octet-stream';
 }
 
 downloadRouter.get('/:fileId', async (req, res, next) => {
@@ -40,11 +53,15 @@ downloadRouter.get('/:fileId', async (req, res, next) => {
     const asciiFallback = downloadName
       .replace(/["\\]/g, '_')
       .replace(/[^\x20-\x7e]/g, '_');
+    const inline = req.query.inline === '1';
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(downloadName)}`
+      `${inline ? 'inline' : 'attachment'}; filename="${asciiFallback}"; filename*=UTF-8''${encodeURIComponent(downloadName)}`
     );
-    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader(
+      'Content-Type',
+      inline ? previewContentType(absPath) : 'application/octet-stream'
+    );
 
     const stream = createReadStream(absPath);
     stream.on('error', (err) => next(err));

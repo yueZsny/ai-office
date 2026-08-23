@@ -30,5 +30,11 @@ class Settings:
     # Embedding 模型
     embedding_model: str = os.getenv("EMBEDDING_MODEL", "./data/models/bge-small-zh-v1.5")
 
+    # RAG 检索相关性阈值（余弦相似度，向量已归一化 + chroma 默认 l2 空间换算）
+    # min：硬阈值，低于此的块不进上下文也不进引用（实测相关块 0.55~0.90，噪音 0.07~0.49）
+    # floor：兜底阈值，全池无 min 命中时按 floor 重筛，避免短问句（如「邮箱是多少」）整问失败
+    rag_min_similarity: float = float(os.getenv("RAG_MIN_SIMILARITY", "0.5"))
+    rag_floor_similarity: float = float(os.getenv("RAG_FLOOR_SIMILARITY", "0.25"))
+
 
 settings = Settings()

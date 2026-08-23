@@ -1,18 +1,20 @@
 /**
  * AI 客户端服务：封装对 ai-service 的所有 HTTP 调用
  * - 统一超时（默认 120s）与错误处理
- * - 各方法与 ai-service 内部接口一一对应（parse / qa / summary / convert / generate）
+ * - 各方法与 ai-service 内部接口一一对应（parse / qa / summary / mindmap / convert / generate）
  *
  * 接口契约（ai-service 规格 6.2 节）：
  * - POST /ai/parse     multipart(file) → { fileId, text, chunks }
  * - POST /ai/qa        { fileId, question, history? } → { answer, sources }
  * - POST /ai/summary   { fileId } → { summary }
+ * - POST /ai/mindmap   { fileId, mode? } → { markdown }
  * - POST /ai/convert   multipart(file) → { fileId, filePath, filename }
  * - POST /ai/generate  { title, outline } → { fileId, filePath, filename }
  * 错误统一为 { error: { message } }
  */
 import { env } from '../config/env';
 import { AITimeoutError, HttpError } from '../utils/errors';
+import { normalizeUploadName } from '../utils/filename';
 
 /** AI 请求超时（毫秒） */
 const AI_TIMEOUT_MS = 120_000;
@@ -61,13 +63,15 @@ async function request(
 /**
  * 构造 multipart 表单（upload.single 用内存存储，buffer 为 Buffer）
  * - new Uint8Array 包装避免 Buffer<ArrayBufferLike> 与 BlobPart 的类型冲突
+ * - 文件名经 normalizeUploadName 还原（multer 按 latin1 解码中文名会乱码，
+ *   若直接用 originalname 会把乱码传给 ai-service 存入向量库）
  */
 function buildFormData(file: Express.Multer.File): FormData {
   const form = new FormData();
   form.append(
     'file',
     new Blob([new Uint8Array(file.buffer)], { type: file.mimetype }),
-    file.originalname
+    normalizeUploadName(file.originalname)
   );
   return form;
 }
@@ -85,18 +89,19 @@ export const aiClient = {
     return (await res.json()) as { fileId: string; text: string; chunks: { index: number; title: string; content: string }[] };
   },
 
-  /** 文档问答：{ fileId, question, history? } → { answer, sources } */
-  async qa(payload: {
-    fileId: string;
+  /** 文档问答（流式 SSE）：{ fileId | fileIds, question, history? } → text/event-stream
+   * 返回原始 Response（body 为 SSE 帧序列），由路由层透传给浏览器 */
+  async qaStream(payload: {
+    fileId?: string;
+    fileIds?: string[];
     question: string;
     history?: { role: 'user' | 'assistant'; content: string }[];
-  }): Promise<{ answer: string; sources: { chunkIndex: number; text: string }[] }> {
-    const res = await request('/ai/qa', {
+  }): Promise<Response> {
+    return request('/ai/qa', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(payload),
     });
-    return (await res.json()) as { answer: string; sources: { chunkIndex: number; text: string }[] };
   },
 
   /** 生成摘要：{ fileId } → { summary } */
@@ -107,6 +112,19 @@ export const aiClient = {
       body: JSON.stringify(payload),
     });
     return (await res.json()) as { summary: string };
+  },
+
+  /** 生成思维导图：{ fileId, mode? } → { markdown }（mode 默认 auto） */
+  async mindmap(payload: {
+    fileId: string;
+    mode?: 'auto' | 'titles' | 'llm';
+  }): Promise<{ markdown: string }> {
+    const res = await request('/ai/mindmap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return (await res.json()) as { markdown: string };
   },
 
   /** PDF→Word 转换：multipart 上传 → { fileId, filePath, filename } */

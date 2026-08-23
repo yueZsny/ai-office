@@ -1,17 +1,19 @@
 /**
  * 问答页：知识库侧边栏 + 对话区
- * - 左侧知识库：已解析文档列表（可折叠 / 可删除），点击切换问答目标
+ * - 左侧知识库：已解析文档列表（多选 / 可删除），多个文件组成问答上下文
  * - 右侧对话区：支持连续提问（保留对话上下文 history），回答内容用 Markdown 渲染
+ * - 引用徽标：「文件名 · 第 X 页」/「第 X 段」，点击 PDF 来源弹窗预览定位到对应页
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Card, Divider, Empty, Input, Layout, Spin } from 'antd';
-import { MenuFoldOutlined, MenuUnfoldOutlined, SendOutlined } from '@ant-design/icons';
+import { Button, Card, Collapse, Divider, Empty, Input, Layout, Spin } from 'antd';
+import { FileSearchOutlined, MenuFoldOutlined, MenuUnfoldOutlined, SendOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import FileUpload from '../components/FileUpload';
 import KnowledgeBase from '../components/KnowledgeBase';
 import ParseStatus from '../components/ParseStatus';
+import PdfPreview from '../components/PdfPreview';
 import useFileStatus from '../hooks/useFileStatus';
-import { deleteFile, listFiles, qaAsk } from '../api';
+import { deleteFile, listFiles, qaAskStream } from '../api';
 import type { ChatMessage, FileInfo, QaResult } from '../api';
 import type { UploadedFile } from '../components/FileUpload';
 
@@ -21,23 +23,31 @@ interface Msg extends ChatMessage {
 }
 
 export default function QaPage() {
-  // 当前问答目标文档（单一事实源）；uploaded 仅保留 FileUpload 展示需要的文件名回退
-  const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  // 当前选中的问答目标文档集合；latestFileId 仅用于轮询新上传文档的解析状态
+  const [activeFileIds, setActiveFileIds] = useState<string[]>([]);
+  const [latestFileId, setLatestFileId] = useState<string | null>(null);
   const [uploaded, setUploaded] = useState<UploadedFile | null>(null);
   // 知识库列表（已解析文档）
   const [files, setFiles] = useState<FileInfo[]>([]);
   const [collapsed, setCollapsed] = useState(false);
-  // 上传后轮询解析状态，parsed 后才能提问
-  const { status: fileStatus, notFound } = useFileStatus(activeFileId ?? undefined);
+  // 只盯最新上传的那个文件（useFileStatus 单目标轮询，不改）
+  const { status: fileStatus, notFound } = useFileStatus(latestFileId ?? undefined);
   const [messages, setMessages] = useState<Msg[]>([]);
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
+  // 引用预览：点击 PDF 来源徽标时打开
+  const [preview, setPreview] = useState<{ fileId: string; page?: number | null } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const ready = fileStatus?.status === 'parsed';
+  // 知识库列表只含已解析文档：选中项全部在列表中即视为就绪
+  const ready =
+    activeFileIds.length > 0 &&
+    activeFileIds.every((id) => files.some((f) => f.fileId === id));
   // 新上传文档尚未入列时回退到 uploaded 的文件名
   const activeFilename =
-    files.find((f) => f.fileId === activeFileId)?.filename ?? uploaded?.filename;
+    files.find((f) => f.fileId === latestFileId)?.filename ??
+    files.find((f) => activeFileIds.includes(f.fileId))?.filename ??
+    uploaded?.filename;
 
   // 拉取知识库列表
   const loadFiles = useCallback(async () => {
@@ -58,19 +68,19 @@ export default function QaPage() {
     if (fileStatus?.status === 'parsed') loadFiles();
   }, [fileStatus?.status, loadFiles]);
 
-  // 当前问答目标已不存在（如被其他入口删除）：刷新列表并清空会话，停止无效轮询
+  // 轮询目标（最新上传文档）已不存在：仅剔除该项并停止轮询，其余选中文档继续可问
   useEffect(() => {
     if (notFound) {
       loadFiles();
-      setActiveFileId(null);
-      setMessages([]);
+      setActiveFileIds((prev) => prev.filter((id) => id !== latestFileId));
+      setLatestFileId(null);
     }
-  }, [notFound, loadFiles]);
+  }, [notFound, latestFileId, loadFiles]);
 
-  // 切换问答目标 → 新会话（清空历史）
+  // 切换问答目标（选中集合变化）→ 新会话（清空历史）
   useEffect(() => {
     setMessages([]);
-  }, [activeFileId]);
+  }, [activeFileIds]);
 
   // 新消息时自动滚动到底部
   useEffect(() => {
@@ -79,7 +89,7 @@ export default function QaPage() {
 
   const handleSend = async () => {
     const q = question.trim();
-    if (!q || !activeFileId || !ready || asking) return;
+    if (!q || activeFileIds.length === 0 || !ready || asking) return;
     // 追加用户消息
     setMessages((prev) => [...prev, { role: 'user', content: q }]);
     setQuestion('');
@@ -87,37 +97,60 @@ export default function QaPage() {
     try {
       // 携带历史实现连续问答（服务端用历史构建上下文）
       const history = messages.map(({ role, content }) => ({ role, content }));
-      const res = await qaAsk(activeFileId, q, history);
-      setMessages((prev) => [...prev, { role: 'assistant', content: res.answer, sources: res.sources }]);
+      const res = await qaAskStream(activeFileIds, q, history, {
+        // 流式渲染：逐 token 追加到最后一条 assistant 消息（无则新建）
+        onToken: (chunk) => {
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === 'assistant') {
+              next[next.length - 1] = { ...last, content: last.content + chunk };
+            } else {
+              next.push({ role: 'assistant', content: chunk });
+            }
+            return next;
+          });
+        },
+      });
+      // 流结束：把引用合并到最后一条 assistant 消息（内容已由 token 累积，此处兜底）
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === 'assistant') {
+          next[next.length - 1] = { ...last, content: res.answer, sources: res.sources };
+        } else {
+          next.push({ role: 'assistant', content: res.answer, sources: res.sources });
+        }
+        return next;
+      });
     } catch (err) {
-      // 文档已被删除 → 刷新列表并重置会话（错误提示已由拦截器处理）
-      if ((err as Error).message.includes('文件不存在')) {
+      // 某选中文档已被删除（404 消息含 fileId）：仅从选中集剔除该项，
+      // 其余文档继续可问，不整场重置（错误提示已由 qaAskStream / 拦截器处理）
+      const deletedId = /文件不存在:\s*([\w-]+)/.exec((err as Error).message)?.[1];
+      if (deletedId) {
         loadFiles();
-        setActiveFileId(null);
-        setMessages([]);
+        setActiveFileIds((prev) => prev.filter((id) => id !== deletedId));
       }
     } finally {
       setAsking(false);
     }
   };
 
-  /** 上传成功：新文档立即成为问答目标（解析完成后自动入列） */
+  /** 上传成功：新文档加入选中集并成为轮询目标（解析完成后自动入列） */
   const handleUploadSuccess = (file: UploadedFile) => {
     setUploaded(file);
-    setActiveFileId(file.fileId);
+    setLatestFileId(file.fileId);
+    setActiveFileIds((prev) => (prev.includes(file.fileId) ? prev : [...prev, file.fileId]));
     loadFiles();
   };
 
-  /** 删除知识库文档；删除当前文档时自动切到剩余第一项 */
+  /** 删除知识库文档：从列表与选中集中移除；删除轮询目标时停止轮询 */
   const handleDelete = async (file: FileInfo) => {
     try {
       await deleteFile(file.fileId);
-      const remaining = files.filter((f) => f.fileId !== file.fileId);
-      setFiles(remaining);
-      if (file.fileId === activeFileId) {
-        setActiveFileId(remaining[0]?.fileId ?? null);
-        setMessages([]);
-      }
+      setFiles(files.filter((f) => f.fileId !== file.fileId));
+      setActiveFileIds((prev) => prev.filter((id) => id !== file.fileId));
+      if (file.fileId === latestFileId) setLatestFileId(null);
     } catch {
       // 删除失败提示已由拦截器处理
     }
@@ -147,15 +180,21 @@ export default function QaPage() {
             />
           </div>
           <div className="qa-sidebar__upload">
-            {/* key 随目标变化：切换文档后上传区回到初始态，避免残留旧文件名 */}
-            <FileUpload key={activeFileId ?? 'none'} onSuccess={handleUploadSuccess} />
+            {/* key 随轮询目标变化：切换后上传区回到初始态，避免残留旧文件名 */}
+            <FileUpload key={latestFileId ?? 'none'} onSuccess={handleUploadSuccess} />
           </div>
           <Divider style={{ margin: '12px 0' }} />
           <div className="qa-sidebar__list">
             <KnowledgeBase
               files={files}
-              activeFileId={activeFileId}
-              onSelect={(f) => setActiveFileId(f.fileId)}
+              activeFileIds={activeFileIds}
+              onToggle={(f) =>
+                setActiveFileIds((prev) =>
+                  prev.includes(f.fileId)
+                    ? prev.filter((id) => id !== f.fileId)
+                    : [...prev, f.fileId]
+                )
+              }
               onDelete={handleDelete}
             />
           </div>
@@ -167,9 +206,9 @@ export default function QaPage() {
             {/* 解析状态：解析中进度条 / 完成 / 失败（规格 5.4 状态机） */}
             <ParseStatus
               status={fileStatus}
-              uploaded={!!activeFileId}
+              uploaded={!!latestFileId}
               filename={activeFilename}
-              fileId={activeFileId ?? undefined}
+              fileId={latestFileId ?? undefined}
             />
 
             {/* 对话区 */}
@@ -179,53 +218,98 @@ export default function QaPage() {
                   description={
                     ready
                       ? '解析完成，输入问题开始提问'
-                      : activeFileId
+                      : activeFileIds.length > 0
                         ? '文件解析中，请稍候…'
-                        : '从左侧知识库选择文档开始提问，或上传新文档'
+                        : '从左侧知识库勾选文档开始提问（可多选），或上传新文档'
                   }
                   style={{ padding: '40px 0' }}
                 />
               ) : (
-                messages.map((msg, i) => (
+                messages.map((msg, i) => {
+                  // 流式生成中：已有内容时显示内容（带闪烁光标），无内容时才显示 Spin
+                  const isStreaming =
+                    msg.role === 'assistant' && asking && i === messages.length - 1;
+                  return (
                   <div key={i} className={`qa-page__msg qa-page__msg--${msg.role}`}>
-                    {msg.role === 'assistant' && asking && i === messages.length - 1 ? (
+                    {isStreaming && !msg.content ? (
                       <Spin />
                     ) : (
-                      <div className="qa-page__content">
+                      <div
+                        className={`qa-page__content${isStreaming && msg.content ? ' qa-page__content--streaming' : ''}`}
+                      >
                         {msg.role === 'user' ? (
                           msg.content
                         ) : (
                           <>
                             <ReactMarkdown>{msg.content}</ReactMarkdown>
-                            {/* 引用片段 */}
+                            {/* 引用片段：外层整块可折叠（默认展开），内层每条单独折叠（默认收起） */}
                             {!!msg.sources?.length && (
-                              <>
-                                <Divider plain style={{ fontSize: 12 }}>
-                                  引用片段
-                                </Divider>
-                                {msg.sources.map((s, j) => (
-                                  <div key={j} className="qa-page__source">
-                                    <div className="qa-page__source-label">
-                                      第 {s.chunkIndex} 段
-                                    </div>
-                                    <div className="qa-page__source-text">{s.text}</div>
-                                  </div>
-                                ))}
-                              </>
+                              <Collapse
+                                ghost
+                                size="small"
+                                className="qa-page__sources"
+                                defaultActiveKey={['sources']}
+                                items={[
+                                  {
+                                    key: 'sources',
+                                    label: `引用片段（${msg.sources.length} 条）`,
+                                    children: (
+                                      <Collapse
+                                        ghost
+                                        size="small"
+                                        defaultActiveKey={[]}
+                                        items={msg.sources.map((s, j) => {
+                                          const srcFile = files.find((f) => f.fileId === s.fileId);
+                                          const isPdf = srcFile?.type === 'pdf';
+                                          // 旧数据无 filename：从知识库列表按 fileId 兜底，避免显示 hash 文件名
+                                          const name = s.filename ?? srcFile?.filename ?? s.fileId;
+                                          // pdf 显示「第 X 页」、docx 显示「第 X 段」；旧数据无页码显示「未知页」
+                                          const pageLabel = s.page
+                                            ? `第 ${s.page} ${isPdf ? '页' : '段'}`
+                                            : '未知页';
+                                          // 仅 PDF 来源可定位预览（docx 无法内嵌渲染）
+                                          const clickable = isPdf && !!s.fileId && !!s.page;
+                                          return {
+                                            key: String(j),
+                                            label: (
+                                              <span className="qa-page__source-label">
+                                                {name} · {pageLabel}
+                                              </span>
+                                            ),
+                                            // extra 区域点击不触发展开，用于 PDF 预览定位
+                                            extra: clickable ? (
+                                              <Button
+                                                type="link"
+                                                size="small"
+                                                icon={<FileSearchOutlined />}
+                                                onClick={() => setPreview({ fileId: s.fileId!, page: s.page })}
+                                              >
+                                                定位
+                                              </Button>
+                                            ) : undefined,
+                                            children: <div className="qa-page__source-text">{s.text}</div>,
+                                          };
+                                        })}
+                                      />
+                                    ),
+                                  },
+                                ]}
+                              />
                             )}
                           </>
                         )}
                       </div>
                     )}
                   </div>
-                ))
+                  );
+                })
               )}
               <div ref={bottomRef} />
             </div>
           </Card>
 
           {/* 提问输入区 */}
-          {activeFileId && (
+          {activeFileIds.length > 0 && (
             <Card className="glass-card">
               <Input.TextArea
                 autoSize={{ minRows: 2, maxRows: 4 }}
@@ -256,6 +340,15 @@ export default function QaPage() {
           )}
         </Layout.Content>
       </Layout>
+
+      {/* 引用预览：内联渲染 PDF 并定位到引用页 */}
+      {preview && (
+        <PdfPreview
+          fileId={preview.fileId}
+          page={preview.page}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </div>
   );
 }

@@ -41,9 +41,10 @@ export interface ChatMessage {
   content: string;
 }
 
-/** 问答请求体：POST /api/qa/ask */
+/** 问答请求体：POST /api/qa/ask（fileIds 用于多文件问答，单 fileId 旧契约保留） */
 export interface QaAskRequest {
-  fileId: string;
+  fileId?: string;
+  fileIds?: string[];
   question: string;
   history?: ChatMessage[];
 }
@@ -51,18 +52,27 @@ export interface QaAskRequest {
 /** 引用片段（RAG 命中） */
 export interface SourceChunk {
   chunkIndex: number;
+  /** 块起始页码（1-based；docx 为段序号；旧数据无此字段为 null） */
+  page?: number | null;
+  /** 来源文件名（旧数据为 null） */
+  filename?: string | null;
+  /** 来源文件 ID（backend 对外 fileId，前端拼下载地址用） */
+  fileId?: string;
   text: string;
 }
 
-/** 问答响应体 */
-export interface QaAskResponse {
-  answer: string;
-  sources: SourceChunk[];
-}
-
+/** 问答已改为流式 SSE（POST /api/qa/ask），响应体事件契约见 ai-service app/api/qa.py */
 /** 摘要响应体：POST /api/qa/summary */
 export interface SummaryResponse {
   summary: string;
+}
+
+/** 思维导图生成模式：auto（标题优先，无标题回退 LLM）/ titles / llm */
+export type MindmapMode = 'auto' | 'titles' | 'llm';
+
+/** 思维导图响应体：POST /api/qa/mindmap */
+export interface MindmapResponse {
+  markdown: string;
 }
 
 /** 大纲生成请求体：POST /api/generate/doc */

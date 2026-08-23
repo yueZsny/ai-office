@@ -43,3 +43,21 @@ class LLMClient:
                 if attempt < 2:
                     time.sleep(1 * (attempt + 1))  # 简单退避后重试
         raise RuntimeError(f"LLM 调用失败: {last_error}") from last_error
+
+    def chat_stream(self, messages: list[dict], temperature: float = 0.7):
+        """流式调用对话模型，逐段产出回复文本增量。
+
+        与 chat 的区别：不重试（重试会重复已发出的 token，且可能已开始写响应流），
+        失败直接抛出由上层决定如何处理。
+        """
+        stream = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            temperature=temperature,
+            timeout=120,
+            stream=True,
+        )
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta

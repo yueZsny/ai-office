@@ -302,18 +302,41 @@ body {
   font-size: 13px;
 }
 
-/* 引用片段 */
-.qa-page__source {
+/* 流式生成中的闪烁光标（跟在最后一个块级元素末尾） */
+.qa-page__content--streaming .markdown-body > :last-child::after {
+  content: '▍';
+  margin-left: 2px;
+  color: var(--color-primary);
+  animation: qa-caret-blink 1s step-end infinite;
+}
+
+@keyframes qa-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* 引用片段（嵌套折叠：外层整块 / 内层每条） */
+.qa-page__sources {
+  margin-top: 8px;
   background: rgba(22, 119, 255, 0.06);
   border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.qa-page__sources > .ant-collapse-item > .ant-collapse-header {
   padding: 8px 12px;
-  margin-top: 8px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.qa-page__sources .ant-collapse-content-box {
+  padding-top: 0;
 }
 
 .qa-page__source-label {
   font-size: 12px;
   color: var(--color-primary);
-  margin-bottom: 4px;
 }
 
 .qa-page__source-text {
@@ -395,6 +418,10 @@ body {
   background: rgba(22, 119, 255, 0.14);
 }
 
+.kb-item__checkbox {
+  flex-shrink: 0;
+}
+
 .kb-item__icon {
   color: var(--color-primary);
   font-size: 16px;
@@ -435,4 +462,12 @@ body {
 .ant-layout-sider-collapsed .kb-item {
   justify-content: center;
   padding: 8px;
+}
+
+/* PDF 预览弹窗内嵌容器 */
+.pdf-preview__embed {
+  width: 100%;
+  height: 70vh;
+  border: none;
+  border-radius: var(--radius-sm);
 }
