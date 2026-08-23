@@ -18,7 +18,10 @@ http.interceptors.response.use(
   (err) => {
     const msg = err.response?.data?.error?.message || '网络异常，请稍后重试';
     message.error(msg);
-    return Promise.reject(new Error(msg));
+    // 附带 HTTP 状态码，供调用方区分 404（文件不存在）等场景
+    const e = new Error(msg) as Error & { status?: number };
+    e.status = err.response?.status;
+    return Promise.reject(e);
   }
 );
 

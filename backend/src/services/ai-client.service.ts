@@ -133,4 +133,9 @@ export const aiClient = {
     });
     return (await res.json()) as { fileId: string; filePath: string; filename: string };
   },
+
+  /** 删除已解析文件：ai-service 清理向量库与共享目录副本（204） */
+  async deleteFile(aiFileId: string): Promise<void> {
+    await request(`/ai/files/${aiFileId}`, { method: 'DELETE' });
+  },
 };

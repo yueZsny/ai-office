@@ -30,6 +30,13 @@ export class NotFoundError extends HttpError {
   }
 }
 
+export class ConflictError extends HttpError {
+  constructor(message: string) {
+    super(409, message);
+    this.name = 'ConflictError';
+  }
+}
+
 export class AITimeoutError extends HttpError {
   constructor(message = 'AI 服务响应超时') {
     super(504, message);

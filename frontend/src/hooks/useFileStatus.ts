@@ -1,17 +1,24 @@
 /**
  * useFileStatus：轮询文件解析状态
  * - 上传后文件处于 uploaded/parsing，2s 轮询 GET /files/:fileId 直至 parsed 或 failed
- * - 30s 上限后放弃轮询（status 保持 parsing，由页面自行提示）
+ * - 3min 上限后放弃轮询（status 保持 parsing，由页面自行提示）
+ * - 目标文件不存在（404，如已被删除）：停止轮询并置 notFound，由页面清理选中状态
  */
 import { useEffect, useRef, useState } from 'react';
 import { getFile } from '../api';
 import type { FileInfo } from '../api';
 
 const POLL_INTERVAL_MS = 2000;
-const POLL_MAX_MS = 30000;
+// 解析含首次 embedding 模型加载 + 向量化，大文档可能 1-2 分钟，上限放宽到 3 分钟
+const POLL_MAX_MS = 180000;
 
-export default function useFileStatus(fileId?: string) {
+export default function useFileStatus(fileId?: string): {
+  status: FileInfo | null;
+  /** 目标文件已不存在（被删除等），应停止使用该 fileId */
+  notFound: boolean;
+} {
   const [status, setStatus] = useState<FileInfo | null>(null);
+  const [notFound, setNotFound] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // 停止轮询（清除定时器）
@@ -29,6 +36,7 @@ export default function useFileStatus(fileId?: string) {
       setStatus(null);
       return;
     }
+    setNotFound(false);
 
     const startedAt = Date.now();
     let stopped = false;
@@ -48,8 +56,14 @@ export default function useFileStatus(fileId?: string) {
         if (info.status === 'parsed' || info.status === 'failed') {
           stopPolling();
         }
-      } catch {
-        // 单次请求失败不中断轮询，等待下次
+      } catch (err) {
+        // 文件已不存在：停止轮询并标记，避免 404 无限重试（页面据此自愈）
+        if ((err as Error & { status?: number }).status === 404) {
+          stopPolling();
+          setStatus(null);
+          setNotFound(true);
+        }
+        // 其他错误：单次请求失败不中断轮询，等待下次
       }
     };
 
@@ -63,5 +77,5 @@ export default function useFileStatus(fileId?: string) {
     };
   }, [fileId]);
 
-  return status;
+  return { status, notFound };
 }

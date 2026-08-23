@@ -56,6 +56,17 @@ export async function getFile(fileId: string): Promise<FileInfo> {
   return data;
 }
 
+/** 知识库列表：全部已解析文档（倒序，新上传的在前） */
+export async function listFiles(): Promise<FileInfo[]> {
+  const { data } = await http.get<FileInfo[]>('/files');
+  return data;
+}
+
+/** 删除知识库文档（后端联动清理向量库与文件） */
+export async function deleteFile(fileId: string): Promise<void> {
+  await http.delete(`/files/${fileId}`);
+}
+
 /** 文档问答（可携带历史实现连续问答） */
 export async function qaAsk(
   fileId: string,

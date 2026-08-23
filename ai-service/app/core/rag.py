@@ -146,6 +146,15 @@ class VectorStore:
         data = collection.get(include=["documents"])
         return data["documents"]
 
+    def delete(self, file_id: str) -> None:
+        """删除该文件的向量 collection（不存在时静默，幂等）"""
+        from chromadb.errors import NotFoundError
+
+        try:
+            self._client.delete_collection(name=file_id)
+        except (ValueError, NotFoundError):
+            pass  # collection 不存在
+
 
 # ---------- 问答 ----------
 
@@ -232,6 +241,11 @@ def get_store() -> VectorStore:
     if _store is None:
         _store = VectorStore()
     return _store
+
+
+def delete_store(file_id: str) -> None:
+    """删除向量数据（供 /ai/files 删除接口调用）"""
+    get_store().delete(file_id)
 
 
 def build_and_store(file_id: str, pages: list) -> list[Chunk]:

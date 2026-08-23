@@ -7,7 +7,7 @@
 export type FileType = 'pdf' | 'docx';
 
 /** 文件处理状态 */
-export type FileStatus = 'uploaded' | 'parsed' | 'converted' | 'failed';
+export type FileStatus = 'uploaded' | 'parsing' | 'parsed' | 'converted' | 'failed';
 
 /** 文件元信息（持久化到 data/files.json） */
 export interface FileMeta {
@@ -21,10 +21,16 @@ export interface FileMeta {
   size: number;
   /** 处理状态 */
   status: FileStatus;
+  /** ai-service 侧的解析 fileId（RAG 检索键，与对外 fileId 不同，规格 6.2） */
+  aiFileId?: string;
+  /** 失败原因（status=failed 时存在，规格 5.3） */
+  errorMessage?: string | null;
   /** 原始文件存储路径 */
   originalPath: string;
   /** 处理结果文件路径（可选） */
   processedPath?: string;
+  /** 文件内容指纹（sha256，上传幂等去重用） */
+  sha256?: string;
   /** 创建时间（ISO 字符串） */
   createdAt: string;
 }

@@ -54,7 +54,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           style={{ flex: 1, minWidth: 0 }}
         />
       </AntdLayout.Header>
-      <AntdLayout.Content style={{ padding: 24 }}>
+      <AntdLayout.Content
+        style={{ padding: 24, maxWidth: 1200, width: '100%', margin: '0 auto' }}
+      >
         {children}
       </AntdLayout.Content>
       <AntdLayout.Footer style={{ textAlign: 'center' }}>
