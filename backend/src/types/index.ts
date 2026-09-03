@@ -78,7 +78,47 @@ export interface MindmapResponse {
 /** 大纲生成请求体：POST /api/generate/doc */
 export interface GenerateDocRequest {
   title: string;
+  /** 大纲条目列表，条目支持 markdown 前缀（# / ## / ### 表示 1/2/3 级，无前缀视为 1 级） */
   outline: string[];
+  /** 前文要点（增量生成时已保留节的概括，注入 Prompt 保持口径一致） */
+  context?: string;
+}
+
+/** 主题生成大纲请求体：POST /api/generate/outline */
+export interface GenerateOutlineRequest {
+  topic: string;
+  /** 一级章节数量（2-10，默认 5） */
+  sectionCount?: number;
+  /** 文档风格：报告 / 论文 / 方案 */
+  style?: string;
+}
+
+/** 分节内容（section_done 帧 / 单节生成响应 / assemble 请求元素共用） */
+export interface SectionContent {
+  title: string;
+  /** 节层级（1/2/3，对应 Word 标题字号） */
+  level: number;
+  /** 正文段落 */
+  paragraphs: string[];
+  /** 要点列表 */
+  bullets: string[];
+}
+
+/** 单节生成请求体：POST /api/generate/section */
+export interface GenerateSectionRequest {
+  docTitle: string;
+  sectionTitle: string;
+  level?: number;
+  /** 写作要求 / 修改意见 */
+  requirement?: string;
+  /** 前文要点（其余节的概括） */
+  context?: string;
+}
+
+/** 组装渲染请求体：POST /api/generate/assemble */
+export interface AssembleRequest {
+  title: string;
+  sections: SectionContent[];
 }
 
 /** 统一错误响应格式 */

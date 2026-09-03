@@ -6,7 +6,7 @@
 - llm 路径：LLM 从前 N 块生成 markdown 提纲（PDF 无标题标记，auto 模式回退此路径）
 - 输出统一为 markdown 大纲字符串，不做 JSON 树，前后端都省一层转换
 """
-from app.llm.client import LLMClient
+from app.llm.client import LLMClient, get_outline_client
 
 from app.core.rag import get_store
 
@@ -91,6 +91,44 @@ class MindmapLLM:
         return markdown
 
 
+# ---------- 主题 → 大纲（供生成页「AI 帮我想大纲」） ----------
+
+TOPIC_OUTLINE_PROMPT_TEMPLATE = """你是一个文档大纲助手。请根据以下主题，输出一份 markdown 文档大纲。
+
+要求：
+1. 只输出 markdown 大纲（用 # / ## / ### 表示层级），不要输出任何解释或多余文字
+2. 一级章节约 {section_count} 个，层级 2-3 级
+3. 每级标题简洁明确（不超过 20 字）
+{style_req}
+[文档主题]
+{topic}
+"""
+
+# 可选风格对应的结构要求（Prompt 追加项）
+TOPIC_OUTLINE_STYLES = {
+    "报告": "4. 遵循正式报告的常见结构（背景 / 现状 / 分析 / 方案 / 计划等）",
+    "论文": "4. 遵循学术论文的常见结构（绪论 / 相关工作 / 方法 / 实验 / 结论等）",
+    "方案": "4. 遵循项目方案的常见结构（目标 / 内容 / 实施步骤 / 资源 / 风险等）",
+}
+
+
+def generate_topic_outline(topic: str, section_count: int = 5, style: str | None = None) -> str:
+    """主题 → markdown 大纲（供 /ai/generate/outline 接口调用，生成页「AI 帮我想大纲」）。
+
+    输出与生成接口的 outline 条目格式同构（# 前缀层级），可直接填入生成页编辑区。
+    """
+    if not topic.strip():
+        raise ValueError("主题不能为空")
+
+    style_req = TOPIC_OUTLINE_STYLES.get(style or "", "")
+    prompt = TOPIC_OUTLINE_PROMPT_TEMPLATE.format(
+        section_count=section_count, style_req=style_req, topic=topic.strip()
+    )
+    # 大纲是中间产物，走 outline 专用客户端（可配置便宜/免费模型，未配置回落主模型）
+    markdown = get_outline_client().chat([{"role": "user", "content": prompt}], temperature=0.3)
+    return MindmapLLM._strip_fence(markdown)
+
+
 # ---------- 对外入口（供 api 层调用） ----------
 
 def generate_markdown(file_id: str, mode: str = "auto") -> str:
@@ -111,5 +149,5 @@ def generate_markdown(file_id: str, mode: str = "auto") -> str:
     if mode == "titles" and not has_titles:
         raise ValueError("该文档没有标题结构（PDF 未做标题识别），请改用 llm 模式")
     if mode == "llm" or (mode == "auto" and not has_titles):
-        return MindmapLLM(LLMClient()).outline([e["content"] for e in entries])
+        return MindmapLLM(get_outline_client()).outline([e["content"] for e in entries])
     return build_from_titles(entries)

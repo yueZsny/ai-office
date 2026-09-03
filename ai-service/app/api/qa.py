@@ -10,20 +10,16 @@
 
 流开始前的参数校验错误仍返回 JSON + 状态码。
 """
-import asyncio
-import json
 from typing import Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api.sse import sse_stream
 from app.core.rag import stream_qa
 
 router = APIRouter()
-
-# 哨兵值：用 next(gen, sentinel) 判停，避免 StopIteration 透出协程（PEP 479）
-_SENTINEL = object()
 
 
 class HistoryMessage(BaseModel):
@@ -40,24 +36,6 @@ class QaRequest(BaseModel):
     fileIds: list[str] | None = Field(default=None, description="文件 ID 列表（多文件问答）")
     question: str = Field(..., description="问题内容")
     history: list[HistoryMessage] | None = Field(default=None, description="对话历史")
-
-
-async def _sse(gen):
-    """同步事件生成器 → SSE 帧。
-
-    LLM 走同步 SDK，逐次 next() 放进线程池执行，避免阻塞事件循环；
-    生成器抛异常时补发一条 error 事件（不断开连接，由前端提示）。
-    """
-    try:
-        while True:
-            event = await asyncio.to_thread(next, gen, _SENTINEL)
-            if event is _SENTINEL:
-                return
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-    except Exception as e:
-        yield (
-            f'data: {json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False)}\n\n'
-        )
 
 
 @router.post("/qa")
@@ -81,9 +59,9 @@ async def qa(req: QaRequest):
     except RuntimeError as e:
         return JSONResponse(status_code=502, content={"error": {"message": str(e)}})
 
-    # 3. SSE 响应；文档未解析等检索错误发生在流中 → _sse 包装为 error 事件
+    # 3. SSE 响应；文档未解析等检索错误发生在流中 → sse_stream 包装为 error 事件
     return StreamingResponse(
-        _sse(gen),
+        sse_stream(gen),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

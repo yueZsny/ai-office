@@ -199,9 +199,129 @@ export async function convertPdf(file: File): Promise<TaskResult> {
   return data;
 }
 
-/** 大纲生成文档 */
-export async function generateDoc(title: string, outline: string[]): Promise<TaskResult> {
-  const { data } = await http.post<TaskResult>('/generate/doc', { title, outline });
+/** 分节内容（section_done 帧 / 单节生成响应 / assemble 请求元素共用） */
+export interface SectionContent {
+  title: string;
+  level: number;
+  paragraphs: string[];
+  bullets: string[];
+}
+
+/** 生成事件帧（与 ai-service /ai/generate SSE 一致） */
+type GenerateStreamEvent =
+  | { type: 'section_start'; index: number; title: string }
+  | { type: 'section_done'; index: number; title: string; level: number; paragraphs: string[]; bullets: string[] }
+  | { type: 'done'; fileId: string; filename: string; filePath: string; downloadUrl: string }
+  | { type: 'error'; message: string };
+
+/**
+ * 大纲生成文档（流式 SSE）：逐节进度经回调下发（含全文），done 时 resolve { fileId, downloadUrl }
+ * - 增量生成时 outline 只传新增条目、context 传已保留节的概括
+ * - 原生 fetch（axios 不适合流式）；非 2xx 仍是 JSON 错误（校验失败等）
+ * - 错误提示复刻 http.ts 拦截器行为（toast + 抛 Error）
+ */
+export async function generateDocStream(
+  title: string,
+  outline: string[],
+  callbacks: {
+    onSectionStart?: (index: number, title: string) => void;
+    onSectionDone?: (index: number, section: SectionContent) => void;
+  } = {},
+  context?: string
+): Promise<TaskResult> {
+  const res = await fetch(`${http.defaults.baseURL}/generate/doc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ title, outline, context }),
+  });
+
+  // 非 2xx：校验/未解析等错误仍是 JSON 响应
+  if (!res.ok) {
+    let msg = '网络异常，请稍后重试';
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) msg = body.error.message;
+    } catch {
+      // 非 JSON 响应体，使用默认错误信息
+    }
+    message.error(msg);
+    throw new Error(msg);
+  }
+
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE 帧以空行分隔，data: 行携带 JSON
+    let sep: number;
+    while ((sep = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const line = frame.split('\n').find((l) => l.startsWith('data: '));
+      if (!line) continue;
+
+      let event: GenerateStreamEvent;
+      try {
+        event = JSON.parse(line.slice(6)) as GenerateStreamEvent;
+      } catch {
+        throw new Error('流式响应解析失败');
+      }
+      if (event.type === 'error') {
+        message.error(event.message);
+        throw new Error(event.message);
+      }
+      if (event.type === 'done') {
+        return { fileId: event.fileId, downloadUrl: event.downloadUrl };
+      }
+      if (event.type === 'section_start') {
+        callbacks.onSectionStart?.(event.index, event.title);
+      } else {
+        callbacks.onSectionDone?.(event.index, {
+          title: event.title,
+          level: event.level,
+          paragraphs: event.paragraphs,
+          bullets: event.bullets,
+        });
+      }
+    }
+  }
+  throw new Error('流式响应意外中断');
+}
+
+/** 单节生成/重生成（一次 LLM 调用）：requirement 为修改意见，context 为其余节的概括 */
+export async function regenSection(payload: {
+  docTitle: string;
+  sectionTitle: string;
+  level?: number;
+  requirement?: string;
+  context?: string;
+}): Promise<SectionContent> {
+  const { data } = await http.post<SectionContent>('/generate/section', payload);
+  return data;
+}
+
+/** 组装渲染（不调 LLM，秒出）：把分节内容渲染成 Word */
+export async function assembleDoc(title: string, sections: SectionContent[]): Promise<TaskResult> {
+  const { data } = await http.post<TaskResult>('/generate/assemble', { title, sections });
+  return data;
+}
+
+/** 主题生成大纲（生成页「AI 帮我想大纲」，返回 markdown 直接填入大纲编辑区） */
+export async function generateOutline(
+  topic: string,
+  sectionCount?: number,
+  style?: string
+): Promise<MindmapResult> {
+  const { data } = await http.post<MindmapResult>('/generate/outline', {
+    topic,
+    sectionCount,
+    style,
+  });
   return data;
 }
 

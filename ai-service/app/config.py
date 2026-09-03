@@ -22,6 +22,12 @@ class Settings:
     llm_base_url: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com/v1")
     llm_model: str = os.getenv("LLM_MODEL", "deepseek-chat")
 
+    # 大纲/提纲类任务专用模型（可选，未配置时回落主模型）：
+    # 大纲是中间产物，质量要求低于正文，可指向更便宜/免费模型（如智谱 GLM-4-Flash）
+    llm_outline_api_key: str = os.getenv("LLM_OUTLINE_API_KEY", "")
+    llm_outline_base_url: str = os.getenv("LLM_OUTLINE_BASE_URL", "")
+    llm_outline_model: str = os.getenv("LLM_OUTLINE_MODEL", "")
+
     # 数据目录
     chroma_dir: str = os.getenv("CHROMA_DIR", "./data/vector")
     upload_dir: str = os.getenv("UPLOAD_DIR", "./data/uploads")

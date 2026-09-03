@@ -20,7 +20,8 @@ export const app = express();
 
 // CORS：允许来源从环境变量读取（默认 localhost:3000 / 127.0.0.1:3000），便于部署到 VPS/局域网
 app.use(cors({ origin: env.corsOrigins }));
-app.use(express.json());
+// json limit 调大：assemble 接口回传全部分节内容（默认 100kb 会截断长文档）
+app.use(express.json({ limit: '5mb' }));
 
 // 请求日志（调试用）：追加写入 data/request.log，便于排查前端轮询等行为
 app.use((req, res, next) => {

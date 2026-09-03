@@ -1,18 +1,22 @@
 /**
  * 摘要页：上传文档 → 一键生成摘要 / 思维导图（markmap 渲染 markdown 大纲）
+ * 脑图结果可一键跳转生成页（「用此大纲生成文档」，大纲预填）
  */
 import { useEffect, useRef, useState } from 'react';
 import { Button, Card, Spin } from 'antd';
 import { DownOutlined, UpOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { Transformer } from 'markmap-lib';
 import { Markmap } from 'markmap-view';
 import FileUpload from '../components/FileUpload';
 import ParseStatus from '../components/ParseStatus';
 import useFileStatus from '../hooks/useFileStatus';
 import { qaMindmap, qaSummary } from '../api';
+import { mindmapMarkdownToOutline } from '../utils/outline';
 import type { UploadedFile } from '../components/FileUpload';
 
 export default function SummaryPage() {
+  const navigate = useNavigate();
   const [uploaded, setUploaded] = useState<UploadedFile | null>(null);
   // 上传后轮询解析状态，parsed 后才能生成摘要/脑图
   const { status: fileStatus, notFound } = useFileStatus(uploaded?.fileId);
@@ -177,13 +181,28 @@ export default function SummaryPage() {
           className="glass-card page-result"
           title="思维导图"
           extra={
-            <Button
-              type="text"
-              size="small"
-              aria-label={mindmapCollapsed ? '展开思维导图' : '折叠思维导图'}
-              icon={mindmapCollapsed ? <DownOutlined /> : <UpOutlined />}
-              onClick={() => setMindmapCollapsed((c) => !c)}
-            />
+            <span className="summary-page__mindmap-actions">
+              <Button
+                size="small"
+                onClick={() =>
+                  navigate('/generate', {
+                    state: {
+                      title: (uploaded?.filename || '文档').replace(/\.\w+$/, ''),
+                      outline: mindmapMarkdownToOutline(mindmapMarkdown),
+                    },
+                  })
+                }
+              >
+                用此大纲生成文档
+              </Button>
+              <Button
+                type="text"
+                size="small"
+                aria-label={mindmapCollapsed ? '展开思维导图' : '折叠思维导图'}
+                icon={mindmapCollapsed ? <DownOutlined /> : <UpOutlined />}
+                onClick={() => setMindmapCollapsed((c) => !c)}
+              />
+            </span>
           }
         >
           {/* 折叠用 display:none 隐藏而非卸载：svg 保持挂载，展开后 markmap 实例不丢 */}

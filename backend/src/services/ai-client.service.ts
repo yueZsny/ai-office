@@ -9,7 +9,10 @@
  * - POST /ai/summary   { fileId } → { summary }
  * - POST /ai/mindmap   { fileId, mode? } → { markdown }
  * - POST /ai/convert   multipart(file) → { fileId, filePath, filename }
- * - POST /ai/generate  { title, outline } → { fileId, filePath, filename }
+ * - POST /ai/generate  { title, outline, context? } → SSE: section_start → section_done*（含全文）→ done | error
+ * - POST /ai/generate/outline { topic, sectionCount?, style? } → { markdown }
+ * - POST /ai/generate/section { docTitle, sectionTitle, level?, requirement?, context? } → { title, level, paragraphs, bullets }
+ * - POST /ai/generate/assemble { title, sections } → { fileId, filePath, filename }
  * 错误统一为 { error: { message } }
  */
 import { env } from '../config/env';
@@ -139,17 +142,74 @@ export const aiClient = {
     return (await res.json()) as { fileId: string; filePath: string; filename: string };
   },
 
-  /** 大纲生成文档：{ title, outline } → { fileId, filePath, filename } */
-  async generate(payload: {
+  /** 大纲生成文档（流式 SSE）：{ title, outline, context? } → text/event-stream
+   * 事件：section_start → section_done*（含全文）→ done（含 fileId/filePath）| error
+   * 返回原始 Response（body 为 SSE 帧序列），由 service 层解析帧、登记元信息后透传 */
+  async generateStream(payload: {
     title: string;
     outline: string[];
+    context?: string;
+  }): Promise<Response> {
+    return request('/ai/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: JSON.stringify(payload),
+    });
+  },
+
+  /** 单节生成/重生成：{ docTitle, sectionTitle, level?, requirement?, context? } → SectionContent
+   * 注意：ai-service 契约字段为 snake_case（doc_title/section_title），此处做边界映射 */
+  async generateSection(payload: {
+    docTitle: string;
+    sectionTitle: string;
+    level?: number;
+    requirement?: string;
+    context?: string;
+  }): Promise<{ title: string; level: number; paragraphs: string[]; bullets: string[] }> {
+    const res = await request('/ai/generate/section', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        doc_title: payload.docTitle,
+        section_title: payload.sectionTitle,
+        level: payload.level,
+        requirement: payload.requirement,
+        context: payload.context,
+      }),
+    });
+    return (await res.json()) as { title: string; level: number; paragraphs: string[]; bullets: string[] };
+  },
+
+  /** 组装渲染：{ title, sections } → { fileId, filePath, filename }（不调 LLM） */
+  async assemble(payload: {
+    title: string;
+    sections: { title: string; level: number; paragraphs: string[]; bullets: string[] }[];
   }): Promise<{ fileId: string; filePath: string; filename: string }> {
-    const res = await request('/ai/generate', {
+    const res = await request('/ai/generate/assemble', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
     return (await res.json()) as { fileId: string; filePath: string; filename: string };
+  },
+
+  /** 主题生成大纲：{ topic, sectionCount?, style? } → { markdown }（生成页「AI 帮我想大纲」）
+   * 注意：ai-service 契约字段为 snake_case（section_count），此处做边界映射 */
+  async outline(payload: {
+    topic: string;
+    sectionCount?: number;
+    style?: string;
+  }): Promise<{ markdown: string }> {
+    const res = await request('/ai/generate/outline', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        topic: payload.topic,
+        section_count: payload.sectionCount,
+        style: payload.style,
+      }),
+    });
+    return (await res.json()) as { markdown: string };
   },
 
   /** 删除已解析文件：ai-service 清理向量库与共享目录副本（204） */
