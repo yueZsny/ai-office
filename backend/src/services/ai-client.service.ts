@@ -69,7 +69,13 @@ async function request(
  * - 文件名经 normalizeUploadName 还原（multer 按 latin1 解码中文名会乱码，
  *   若直接用 originalname 会把乱码传给 ai-service 存入向量库）
  */
-function buildFormData(file: Express.Multer.File): FormData {
+type ParseUploadFile = {
+  buffer: Buffer;
+  originalname: string;
+  mimetype: string;
+};
+
+function buildFormData(file: ParseUploadFile): FormData {
   const form = new FormData();
   form.append(
     'file',
@@ -86,10 +92,23 @@ export const aiClient = {
     text: string;
     chunks: { index: number; title: string; content: string }[];
   }> {
+    return this.parseFromBuffer(file);
+  },
+
+  /** 从内存 buffer 解析（上传与生成文档入库共用） */
+  async parseFromBuffer(file: ParseUploadFile): Promise<{
+    fileId: string;
+    text: string;
+    chunks: { index: number; title: string; content: string }[];
+  }> {
     const form = buildFormData(file);
 
     const res = await request('/ai/parse', { method: 'POST', body: form });
-    return (await res.json()) as { fileId: string; text: string; chunks: { index: number; title: string; content: string }[] };
+    return (await res.json()) as {
+      fileId: string;
+      text: string;
+      chunks: { index: number; title: string; content: string }[];
+    };
   },
 
   /** 文档问答（流式 SSE）：{ fileId | fileIds, question, history? } → text/event-stream

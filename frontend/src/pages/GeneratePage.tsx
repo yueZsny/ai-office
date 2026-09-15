@@ -8,19 +8,22 @@
  * - 增量生成：大纲增改后点「生成文档」只生成新条目，已保留节注入前文概括（context）
  * - 阅读模式：全部节连成一篇滚动长文（react-markdown）
  * - 下载：内容有改动时先 assemble（不调 LLM）再下载
+ * - 加入知识库：生成/组装后的 Word 解析入库，可继续问答
  */
 import { useEffect, useRef, useState } from 'react';
 import { Button, Card, Input, Modal, Popconfirm, Select, Spin, message } from 'antd';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   assembleDoc,
   downloadUrl,
   generateDocStream,
   generateOutline,
+  importGeneratedToKb,
   listFiles,
   qaMindmap,
   regenSection,
 } from '../api';
+import useFileStatus from '../hooks/useFileStatus';
 import { mindmapMarkdownToOutline } from '../utils/outline';
 import type { FileInfo, SectionContent, TaskResult } from '../api';
 
@@ -114,6 +117,7 @@ function renameOutlineLine(outlineText: string, oldTitle: string, newTitle: stri
 
 export default function GeneratePage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [title, setTitle] = useState('');
   const [topic, setTopic] = useState('');
   const [outline, setOutline] = useState('');
@@ -133,6 +137,12 @@ export default function GeneratePage() {
   const [result, setResult] = useState<TaskResult | null>(null);
   const [dirty, setDirty] = useState(false);
   const [readMode, setReadMode] = useState(false);
+
+  // 加入知识库：解析入库后轮询状态
+  const [kbImporting, setKbImporting] = useState(false);
+  const [kbImported, setKbImported] = useState(false);
+  const [importPollFileId, setImportPollFileId] = useState<string | undefined>();
+  const { status: importKbStatus } = useFileStatus(importPollFileId);
   // 阅读模式：侧边目录滚动高亮（scrollspy）
   const [activeTitle, setActiveTitle] = useState<string | null>(null);
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -174,6 +184,26 @@ export default function GeneratePage() {
     if (state?.title) setTitle(state.title);
     if (state?.outline) setOutline(state.outline);
   }, [location.state]);
+
+  // 内容修改后需重新入库
+  useEffect(() => {
+    if (dirty) setKbImported(false);
+  }, [dirty]);
+
+  // 轮询加入知识库解析结果
+  useEffect(() => {
+    if (!importPollFileId || !importKbStatus) return;
+    if (importKbStatus.status === 'parsed') {
+      setKbImported(true);
+      setKbImporting(false);
+      setImportPollFileId(undefined);
+      message.success('已加入知识库，可前往文档问答使用');
+    } else if (importKbStatus.status === 'failed') {
+      setKbImporting(false);
+      setImportPollFileId(undefined);
+      message.error(importKbStatus.errorMessage || '加入知识库失败');
+    }
+  }, [importPollFileId, importKbStatus]);
 
   /** 从知识库导入大纲：参考文档 → mindmap 提纲（titles 秒出 / PDF 回退 LLM）→ 填入编辑区 */
   const handleImportOutline = async () => {
@@ -219,6 +249,8 @@ export default function GeneratePage() {
 
     setGenerating(true);
     setResult(null);
+    setKbImported(false);
+    setImportPollFileId(undefined);
     setProgress({ current: null, done: 0 });
 
     try {
@@ -384,6 +416,24 @@ export default function GeneratePage() {
       window.open(downloadUrl(r.fileId), '_blank');
     } finally {
       setAssembling(false);
+    }
+  };
+
+  /** 加入知识库：先确保有最新 docx（必要时 assemble），再触发后台解析入库 */
+  const handleImportToKb = async () => {
+    if (kbImporting || kbImported || !sections.length) return;
+    setKbImporting(true);
+    try {
+      let r = result;
+      if (dirty || !r) {
+        r = await assembleDoc(title.trim(), sections);
+        setResult(r);
+        setDirty(false);
+      }
+      await importGeneratedToKb(r.fileId);
+      setImportPollFileId(r.fileId);
+    } catch {
+      setKbImporting(false);
     }
   };
 
@@ -568,6 +618,21 @@ export default function GeneratePage() {
               >
                 下载 Word
               </Button>
+              <Button
+                size="small"
+                loading={kbImporting}
+                disabled={
+                  sections.length === 0 || kbImporting || kbImported || assembling
+                }
+                onClick={handleImportToKb}
+              >
+                {kbImported ? '已在知识库' : '加入知识库'}
+              </Button>
+              {kbImported && (
+                <Button size="small" type="link" onClick={() => navigate('/qa')}>
+                  前往问答
+                </Button>
+              )}
             </div>
           }
         >

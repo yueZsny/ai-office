@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { env } from '../config/env';
 import type { FileMeta, FileStatus } from '../types';
-import { extname, generateId } from '../utils/file.utils';
+import { extname, generateId, resolveFileType } from '../utils/file.utils';
 import { normalizeUploadName } from '../utils/filename';
 import { NotFoundError } from '../utils/errors';
 
@@ -70,15 +70,17 @@ export const fileService = {
     await fs.mkdir(env.uploadDir, { recursive: true });
     await fs.writeFile(path.join(env.uploadDir, storedName), file.buffer);
 
+    const now = new Date().toISOString();
     const meta: FileMeta = {
       fileId,
       filename,
-      type: ext === '.docx' ? 'docx' : 'pdf',
+      type: resolveFileType(ext),
       size: file.size,
       status: 'uploaded',
       originalPath: path.join(env.uploadDir, storedName),
       sha256: digest,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     all.push(meta);
@@ -104,16 +106,18 @@ export const fileService = {
     await fs.mkdir(env.uploadDir, { recursive: true });
     await fs.writeFile(originalPath, originalFile.buffer);
 
+    const now = new Date().toISOString();
     const meta: FileMeta = {
       fileId,
       filename: normalizeUploadName(originalFile.originalname),
-      type: ext === '.docx' ? 'docx' : 'pdf',
+      type: resolveFileType(ext),
       size: originalFile.size,
       status: 'converted',
       originalPath,
       processedPath,
       sha256: sha256(originalFile.buffer),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     const all = await readMeta();
@@ -133,6 +137,7 @@ export const fileService = {
     filename: string,
     processedPath: string
   ): Promise<FileMeta> {
+    const now = new Date().toISOString();
     const meta: FileMeta = {
       fileId,
       filename,
@@ -141,7 +146,8 @@ export const fileService = {
       status: 'converted',
       originalPath: processedPath,
       processedPath,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
     };
 
     const all = await readMeta();
@@ -173,6 +179,7 @@ export const fileService = {
     meta.status = status;
     if (processedPath) meta.processedPath = processedPath;
     meta.errorMessage = errorMessage ?? null;
+    meta.updatedAt = new Date().toISOString();
     await writeMeta(all);
 
     return meta;
@@ -185,6 +192,7 @@ export const fileService = {
     if (!meta) throw new NotFoundError(`文件不存在: ${fileId}`);
 
     meta.aiFileId = aiFileId;
+    meta.updatedAt = new Date().toISOString();
     await writeMeta(all);
 
     return meta;
@@ -225,5 +233,36 @@ export const fileService = {
     }
 
     return meta;
+  },
+
+  /**
+   * 启动时恢复卡住的 parsing 任务（进程重启后 fire-and-forget 任务丢失）
+   * - 不续跑解析，仅将超时记录置为 failed，避免永久「解析中」
+   * - 超时阈值见 env.parsingTimeoutMinutes；无 updatedAt 时回退 createdAt
+   */
+  async recoverStaleParsingTasks(): Promise<number> {
+    const all = await readMeta();
+    const timeoutMs = env.parsingTimeoutMinutes * 60 * 1000;
+    const now = Date.now();
+    let recovered = 0;
+
+    for (const meta of all) {
+      if (meta.status !== 'parsing') continue;
+
+      const ref = meta.updatedAt ?? meta.createdAt;
+      const elapsed = now - new Date(ref).getTime();
+      if (elapsed < timeoutMs) continue;
+
+      meta.status = 'failed';
+      meta.errorMessage = '解析中断（服务重启或超时），请重新上传';
+      meta.updatedAt = new Date().toISOString();
+      recovered++;
+    }
+
+    if (recovered > 0) {
+      await writeMeta(all);
+    }
+
+    return recovered;
   },
 };

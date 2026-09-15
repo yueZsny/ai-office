@@ -4,7 +4,7 @@
  */
 
 /** 支持的文件类型 */
-export type FileType = 'pdf' | 'docx';
+export type FileType = 'pdf' | 'docx' | 'image';
 
 /** 文件处理状态 */
 export type FileStatus = 'uploaded' | 'parsing' | 'parsed' | 'converted' | 'failed';
@@ -33,6 +33,8 @@ export interface FileMeta {
   sha256?: string;
   /** 创建时间（ISO 字符串） */
   createdAt: string;
+  /** 最后状态更新时间（ISO 字符串；进入 parsing 等状态变更时写入，用于孤儿任务检测） */
+  updatedAt?: string;
 }
 
 /** 对话历史消息 */
@@ -119,6 +121,12 @@ export interface GenerateSectionRequest {
 export interface AssembleRequest {
   title: string;
   sections: SectionContent[];
+}
+
+/** 生成文档加入知识库响应：POST /api/generate/:fileId/import */
+export interface ImportToKbResponse {
+  fileId: string;
+  status: 'parsing';
 }
 
 /** 统一错误响应格式 */

@@ -6,6 +6,7 @@
  * - POST /api/generate/section  单节生成/重生成：{ docTitle, sectionTitle, level?, requirement?, context? }
  *                               → { title, level, paragraphs, bullets }
  * - POST /api/generate/assemble 组装渲染：{ title, sections: [...] } → { fileId, downloadUrl }（不调 LLM）
+ * - POST /api/generate/:fileId/import 生成文档加入知识库 → { fileId, status: 'parsing' }（202，后台解析）
  */
 import { Router } from 'express';
 import { generateService } from '../services/generate.service';
@@ -76,6 +77,15 @@ generateRouter.post('/outline', async (req, res, next) => {
     };
     const result = await generateService.outline(topic ?? '', sectionCount, style);
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+});
+
+generateRouter.post('/:fileId/import', async (req, res, next) => {
+  try {
+    const result = await generateService.importToKnowledgeBase(req.params.fileId);
+    res.status(202).json(result);
   } catch (err) {
     next(err);
   }

@@ -3,7 +3,7 @@
  * - 文件图标 + 文件名 + 大小 + 重新上传按钮
  * - 供 FileUpload 上传成功后展示（页面能直观看到上传了什么文件）
  */
-import { FileOutlined, FilePdfOutlined, FileWordOutlined, ReloadOutlined } from '@ant-design/icons';
+import { FileImageOutlined, FileOutlined, FilePdfOutlined, FileWordOutlined, ReloadOutlined } from '@ant-design/icons';
 import { Button } from 'antd';
 
 interface UploadedFileInfoProps {
@@ -23,9 +23,10 @@ export function formatSize(bytes: number): string {
 
 /** 按扩展名选图标 */
 function FileIcon({ name }: { name: string }) {
-  const ext = name.toLowerCase().endsWith('.pdf') ? 'pdf' : name.toLowerCase().endsWith('.docx') ? 'word' : 'file';
-  if (ext === 'pdf') return <FilePdfOutlined />;
-  if (ext === 'word') return <FileWordOutlined />;
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.pdf')) return <FilePdfOutlined />;
+  if (lower.endsWith('.docx')) return <FileWordOutlined />;
+  if (/\.(jpe?g|png|bmp)$/.test(lower)) return <FileImageOutlined />;
   return <FileOutlined />;
 }
 

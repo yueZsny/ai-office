@@ -325,6 +325,16 @@ export async function generateOutline(
   return data;
 }
 
+/** 生成文档加入知识库（后台解析，返回 202 + parsing 状态） */
+export async function importGeneratedToKb(
+  fileId: string
+): Promise<{ fileId: string; status: 'parsing' }> {
+  const { data } = await http.post<{ fileId: string; status: 'parsing' }>(
+    `/generate/${fileId}/import`
+  );
+  return data;
+}
+
 /** 拼接结果下载地址（GET /download/:fileId，浏览器直接访问下载） */
 export function downloadUrl(fileId: string): string {
   return `${http.defaults.baseURL}/download/${fileId}`;

@@ -11,7 +11,7 @@ import type { UploadProps } from 'antd';
 import { upload } from '../api';
 import UploadedFileInfo from './UploadedFileInfo';
 
-/** 允许的扩展名与大小限制（与后端一致） */
+/** 允许的扩展名与大小限制（与后端一致；图片 OCR 入口暂不开放） */
 const ACCEPT_EXTS = ['.pdf', '.docx'];
 const MAX_SIZE_MB = 20;
 

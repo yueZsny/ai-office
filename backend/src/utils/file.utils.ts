@@ -3,9 +3,17 @@
  */
 import { randomUUID } from 'crypto';
 
-
-/** 允许上传的扩展名 */
+/** 允许上传的扩展名（图片 OCR 保留在 ai-service，上传入口暂不开放） */
 export const ALLOWED_EXTENSIONS = ['.pdf', '.docx'] as const;
+
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.bmp'] as const;
+
+/** 根据扩展名解析文件类型（存入 files.json；image 供历史数据展示） */
+export function resolveFileType(ext: string): 'pdf' | 'docx' | 'image' {
+  if (ext === '.docx') return 'docx';
+  if ((IMAGE_EXTENSIONS as readonly string[]).includes(ext)) return 'image';
+  return 'pdf';
+}
 
 /** 校验文件扩展名是否合法 */
 export function isValidExtension(filename: string): boolean {

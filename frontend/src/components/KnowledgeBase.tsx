@@ -5,7 +5,7 @@
  * - 折叠态由 CSS 祖先选择器 .ant-layout-sider-collapsed 控制，组件内部无需感知
  */
 import { Button, Checkbox, Empty, Popconfirm } from 'antd';
-import { DeleteOutlined, FilePdfOutlined, FileWordOutlined } from '@ant-design/icons';
+import { DeleteOutlined, FileImageOutlined, FilePdfOutlined, FileWordOutlined } from '@ant-design/icons';
 import type { FileInfo } from '../api';
 
 interface KnowledgeBaseProps {
@@ -47,7 +47,13 @@ export default function KnowledgeBase({
             className="kb-item__checkbox"
           />
           <span className="kb-item__icon">
-            {file.type === 'pdf' ? <FilePdfOutlined /> : <FileWordOutlined />}
+            {file.type === 'pdf' ? (
+              <FilePdfOutlined />
+            ) : file.type === 'image' ? (
+              <FileImageOutlined />
+            ) : (
+              <FileWordOutlined />
+            )}
           </span>
           <span className="kb-item__name" title={file.filename}>
             {file.filename}

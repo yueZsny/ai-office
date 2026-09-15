@@ -21,4 +21,6 @@ export const env = {
   corsOrigins: (process.env.CORS_ORIGIN || 'http://localhost:3000,http://127.0.0.1:3000')
     .split(',')
     .map((s) => s.trim()),
+  /** parsing 状态超时（分钟）：超过则启动时标记为 failed */
+  parsingTimeoutMinutes: Number(process.env.PARSING_TIMEOUT_MINUTES || 5),
 };

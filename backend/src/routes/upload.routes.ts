@@ -11,8 +11,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { env } from '../config/env';
-import { aiClient } from '../services/ai-client.service';
 import { fileService } from '../services/file.service';
+import { parseFileInBackground } from '../services/parse.service';
 import { isValidExtension, isWithinSizeLimit } from '../utils/file.utils';
 import { ValidationError } from '../utils/errors';
 
@@ -30,7 +30,7 @@ uploadRouter.post('/', upload.single('file'), async (req, res, next) => {
       throw new ValidationError('缺少文件字段（file）');
     }
 
-    // 扩展名校验（仅 .pdf/.docx）
+    // 扩展名校验（仅 PDF / Word；图片 OCR 入口暂不开放）
     if (!isValidExtension(req.file.originalname)) {
       throw new ValidationError('仅支持 PDF / Word 文件');
     }
@@ -44,7 +44,12 @@ uploadRouter.post('/', upload.single('file'), async (req, res, next) => {
 
     // 置为解析中，立即返回（解析在后台异步执行，前端轮询状态）
     await fileService.updateStatus(meta.fileId, 'parsing');
-    void parseInBackground(meta.fileId, req.file);
+    void parseFileInBackground(meta.fileId, {
+      buffer: req.file.buffer,
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+    });
 
     res.status(201).json({
       fileId: meta.fileId,
@@ -56,20 +61,3 @@ uploadRouter.post('/', upload.single('file'), async (req, res, next) => {
     next(err);
   }
 });
-
-/**
- * 后台解析任务（fire-and-forget）：
- * - 成功：记录 ai-service 的 fileId（RAG 检索键）并置 parsed
- * - 失败：置 failed 并记录原因（errorMessage 由前端展示）
- * 注意：req.file 的 buffer 在响应返回后仍可读（闭包持有引用）
- */
-async function parseInBackground(fileId: string, file: Express.Multer.File): Promise<void> {
-  try {
-    const { fileId: aiFileId } = await aiClient.parse(file);
-    await fileService.updateAiFileId(fileId, aiFileId);
-    await fileService.updateStatus(fileId, 'parsed');
-  } catch (err) {
-    const message = (err as Error).message || '解析失败';
-    await fileService.updateStatus(fileId, 'failed', undefined, message);
-  }
-}

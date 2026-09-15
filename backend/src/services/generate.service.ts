@@ -8,9 +8,12 @@
  * - 结果文件由 ai-service 写入共享 PROCESSED_DIR，后端登记 filePath 供下载
  */
 import { Readable } from 'stream';
+import { promises as fs } from 'fs';
+import path from 'path';
 import { aiClient } from './ai-client.service';
 import { fileService } from './file.service';
-import { ValidationError } from '../utils/errors';
+import { parseFileInBackground } from './parse.service';
+import { ConflictError, NotFoundError, ValidationError } from '../utils/errors';
 import type { MindmapResponse, SectionContent } from '../types';
 
 /** ai-service 生成流事件（与 /ai/generate SSE 契约一致；downloadUrl 由 backend 在 done 帧附加） */
@@ -181,5 +184,53 @@ export const generateService = {
       ...(style ? { style } : {}),
     });
     return { markdown: result.markdown };
+  },
+
+  /**
+   * 生成文档加入知识库：从 processedPath 读取 docx → 后台 parse → parsed
+   * - 仅 status=converted / failed（可重试）可导入
+   * - 同一条 fileId 状态迁移，不新建记录
+   */
+  async importToKnowledgeBase(fileId: string): Promise<{ fileId: string; status: 'parsing' }> {
+    const meta = await fileService.getById(fileId);
+
+    if (meta.status === 'parsed') {
+      throw new ConflictError('该文档已在知识库中');
+    }
+    if (meta.status === 'parsing') {
+      throw new ConflictError('文档正在解析中，请稍候');
+    }
+    if (meta.status !== 'converted' && meta.status !== 'failed') {
+      throw new ConflictError('仅支持将已生成的 Word 文档加入知识库');
+    }
+
+    const filePath = meta.processedPath ?? meta.originalPath;
+    if (!filePath) {
+      throw new ValidationError('找不到文档文件');
+    }
+
+    const ext = path.extname(meta.filename).toLowerCase();
+    if (ext !== '.docx') {
+      throw new ValidationError('仅支持 Word 文档加入知识库');
+    }
+
+    let buffer: Buffer;
+    try {
+      buffer = await fs.readFile(filePath);
+    } catch {
+      throw new NotFoundError('文档文件不存在或无法读取');
+    }
+
+    await fileService.updateStatus(fileId, 'parsing');
+
+    void parseFileInBackground(fileId, {
+      buffer,
+      originalname: meta.filename,
+      mimetype:
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      size: buffer.length,
+    });
+
+    return { fileId, status: 'parsing' };
   },
 };
