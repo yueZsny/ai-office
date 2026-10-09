@@ -7,10 +7,15 @@
  */
 import { Readable } from 'stream';
 import { Router } from 'express';
+import { env } from '../config/env';
+import { rateLimit } from '../middleware/rate-limit.middleware';
 import { qaService } from '../services/qa.service';
 import type { ChatMessage, MindmapMode } from '../types';
 
 export const qaRouter = Router();
+
+// 三个端点全走 LLM，是限流的最主要目标（per-IP 固定窗口）
+const qaLimiter = rateLimit('qa', env.rateLimitQaPerWindow);
 
 interface AskBody {
   fileId?: string;
@@ -19,7 +24,7 @@ interface AskBody {
   history?: ChatMessage[];
 }
 
-qaRouter.post('/ask', async (req, res, next) => {
+qaRouter.post('/ask', qaLimiter, async (req, res, next) => {
   try {
     const { fileId, fileIds, question, history } = req.body as AskBody;
     // 校验（含 parsed 状态）失败时仍走 JSON 错误中间件（400/404/409）
@@ -42,7 +47,7 @@ qaRouter.post('/ask', async (req, res, next) => {
   }
 });
 
-qaRouter.post('/summary', async (req, res, next) => {
+qaRouter.post('/summary', qaLimiter, async (req, res, next) => {
   try {
     const { fileId } = req.body as { fileId?: string };
     const result = await qaService.summarize(fileId ?? '');
@@ -52,7 +57,7 @@ qaRouter.post('/summary', async (req, res, next) => {
   }
 });
 
-qaRouter.post('/mindmap', async (req, res, next) => {
+qaRouter.post('/mindmap', qaLimiter, async (req, res, next) => {
   try {
     const { fileId, mode } = req.body as { fileId?: string; mode?: MindmapMode };
     const result = await qaService.mindmap(fileId ?? '', mode);

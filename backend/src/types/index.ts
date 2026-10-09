@@ -9,7 +9,7 @@ export type FileType = 'pdf' | 'docx' | 'image';
 /** 文件处理状态 */
 export type FileStatus = 'uploaded' | 'parsing' | 'parsed' | 'converted' | 'failed';
 
-/** 文件元信息（持久化到 data/files.json） */
+/** 文件元信息（持久化到 PostgreSQL files 表，见 db/schema.ts） */
 export interface FileMeta {
   /** 文件唯一 ID（uuid） */
   fileId: string;
@@ -132,4 +132,109 @@ export interface ImportToKbResponse {
 /** 统一错误响应格式 */
 export interface ErrorResponse {
   error: { message: string };
+}
+
+/* ---------- LLM 设置（/api/settings/llm） ---------- */
+
+/** LLM 供应商配置（apiKey 明文仅存 PostgreSQL，绝不出现在任何 HTTP 响应中） */
+export interface LlmProvider {
+  id: string;
+  /** 显示名称（如「DeepSeek 官方」） */
+  name: string;
+  apiKey: string;
+  /** OpenAI 兼容 base_url */
+  baseUrl: string;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 供应商配置（对外：apiKey 打码） */
+export interface LlmProviderPublic {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  /** 打码后的 key（如 sk-1****cdef），仅用于展示「已保存」 */
+  apiKeyMasked: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** PostgreSQL settings 表 key='llm' 行（jsonb）的持久化结构（行键镜像见 ai-service config_store.py） */
+export interface LlmSettingsFile {
+  version: number;
+  providers: LlmProvider[];
+  /** 主模型槽位（问答/摘要/文档生成），null = 回落 ai-service 环境变量 */
+  mainProviderId: string | null;
+  /** 大纲模型槽位（思维导图），null = 跟随主模型 */
+  outlineProviderId: string | null;
+  updatedAt: string;
+}
+
+/** 全量设置响应（所有变更端点统一返回，前端一次 setState） */
+export interface LlmSettingsResponse {
+  providers: LlmProviderPublic[];
+  mainProviderId: string | null;
+  outlineProviderId: string | null;
+}
+
+/** 新建供应商请求体：POST /api/settings/llm/providers */
+export interface LlmProviderCreateRequest {
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
+/** 更新供应商请求体：PUT /api/settings/llm/providers/:id（apiKey 缺省或空白 = 不修改） */
+export interface LlmProviderUpdateRequest {
+  name?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
+/** 槽位设置请求体：PUT /api/settings/llm/slots */
+export interface LlmSlotsRequest {
+  mainProviderId: string | null;
+  outlineProviderId: string | null;
+}
+
+/** 测试连接请求体：POST /api/settings/llm/test
+ * 解析优先级：body 字段 > providerId 对应已存值；无 providerId 时三者必填 */
+export interface LlmTestRequest {
+  providerId?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}
+
+/** 测试连接响应：ok=false 时是正常结果（诊断信息），非错误 */
+export interface LlmTestResponse {
+  ok: boolean;
+  latencyMs: number;
+  model: string;
+  message: string;
+}
+
+/** 生效配置查询响应：GET /api/settings/llm/effective（ai-service 不可用时 available=false，软失败） */
+export interface LlmEffectiveResponse {
+  available: boolean;
+  source?: 'db' | 'env';
+  main?: {
+    providerName: string | null;
+    baseUrl: string;
+    model: string;
+    apiKeyMasked: string;
+  };
+  outline?: {
+    providerName: string | null;
+    baseUrl: string;
+    model: string;
+    apiKeyMasked: string;
+    /** true = 大纲槽位未指定，跟随主模型 */
+    fallbackToMain: boolean;
+  };
+  message?: string;
 }

@@ -6,6 +6,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { env } from '../config/env';
+import { rateLimit } from '../middleware/rate-limit.middleware';
 import { convertService } from '../services/convert.service';
 import { isValidExtension } from '../utils/file.utils';
 import { ValidationError } from '../utils/errors';
@@ -17,7 +18,8 @@ const upload = multer({
   limits: { fileSize: env.maxFileSizeMb * 1024 * 1024 },
 });
 
-convertRouter.post('/pdf2word', upload.single('file'), async (req, res, next) => {
+// 限流器必须在 multer 之前（转换是 CPU 密集 + 20MB 内存），理由同 upload 路由
+convertRouter.post('/pdf2word', rateLimit('convert', env.rateLimitConvertPerWindow), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       throw new ValidationError('缺少文件字段（file）');

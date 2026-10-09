@@ -13,26 +13,30 @@
  * - POST /ai/generate/outline { topic, sectionCount?, style? } → { markdown }
  * - POST /ai/generate/section { docTitle, sectionTitle, level?, requirement?, context? } → { title, level, paragraphs, bullets }
  * - POST /ai/generate/assemble { title, sections } → { fileId, filePath, filename }
+ * - POST /ai/llm/test { apiKey, baseUrl, model } → { ok, latencyMs, model, message }
+ * - GET  /ai/llm/effective → { source, main, outline }（key 打码）
  * 错误统一为 { error: { message } }
  */
 import { env } from '../config/env';
+import type { LlmEffectiveResponse, LlmTestResponse } from '../types';
 import { AITimeoutError, HttpError } from '../utils/errors';
 import { normalizeUploadName } from '../utils/filename';
 
-/** AI 请求超时（毫秒） */
+/** AI 请求默认超时（毫秒） */
 const AI_TIMEOUT_MS = 120_000;
 
 /**
  * 发起对 ai-service 的请求，统一超时与错误处理
- * - 超时：AbortController 触发 AITimeoutError（504）
+ * - 超时：AbortController 触发 AITimeoutError（504），超时时长可按调用点覆盖（如测试连接快速失败）
  * - 非 2xx：解析 ai-service 的 { error: { message } }，透传其状态码与错误信息
  */
 async function request(
   path: string,
-  init: RequestInit = {}
+  init: RequestInit = {},
+  timeoutMs: number = AI_TIMEOUT_MS
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   let res: Response;
   try {
@@ -234,5 +238,30 @@ export const aiClient = {
   /** 删除已解析文件：ai-service 清理向量库与共享目录副本（204） */
   async deleteFile(aiFileId: string): Promise<void> {
     await request(`/ai/files/${aiFileId}`, { method: 'DELETE' });
+  },
+
+  /** 测试 LLM 连接（设置页「测试连接」）：{ apiKey, baseUrl, model } → { ok, latencyMs, model, message }
+   * 30s 超时快速失败（ai-service 侧不重试 + 20s 超时），错误 key 秒级返回 */
+  async testLlm(payload: {
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+  }): Promise<LlmTestResponse> {
+    const res = await request(
+      '/ai/llm/test',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      30_000
+    );
+    return (await res.json()) as LlmTestResponse;
+  },
+
+  /** 查询生效 LLM 配置（key 打码）：GET /ai/llm/effective（5s 快速超时） */
+  async effectiveLlm(): Promise<LlmEffectiveResponse> {
+    const res = await request('/ai/llm/effective', { method: 'GET' }, 5_000);
+    return (await res.json()) as LlmEffectiveResponse;
   },
 };

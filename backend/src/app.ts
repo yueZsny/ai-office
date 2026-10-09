@@ -15,8 +15,12 @@ import { downloadRouter } from './routes/download.routes';
 import { qaRouter } from './routes/qa.routes';
 import { convertRouter } from './routes/convert.routes';
 import { generateRouter } from './routes/generate.routes';
+import { settingsRouter } from './routes/settings.routes';
 
 export const app = express();
+
+// 反向代理（nginx）后开启：req.ip 取 X-Forwarded-For，否则限流会全站共享代理 IP 一个桶
+app.set('trust proxy', env.trustProxy);
 
 // CORS：允许来源从环境变量读取（默认 localhost:3000 / 127.0.0.1:3000），便于部署到 VPS/局域网
 app.use(cors({ origin: env.corsOrigins }));
@@ -30,7 +34,7 @@ app.use((req, res, next) => {
     const line = `[req] ${new Date().toISOString()} ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`;
     console.log(line);
     try {
-      appendFileSync(path.join(path.dirname(env.metaFile), 'request.log'), line + '\n');
+      appendFileSync(path.join(env.logDir, 'request.log'), line + '\n');
     } catch {
       /* 日志写入失败不阻断请求 */
     }
@@ -48,6 +52,7 @@ app.use('/api/download', downloadRouter);
 app.use('/api/qa', qaRouter);
 app.use('/api/convert', convertRouter);
 app.use('/api/generate', generateRouter);
+app.use('/api/settings', settingsRouter);
 
 // 统一错误处理（必须放在所有路由之后）
 app.use(errorHandler);

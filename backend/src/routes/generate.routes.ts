@@ -9,12 +9,19 @@
  * - POST /api/generate/:fileId/import 生成文档加入知识库 → { fileId, status: 'parsing' }（202，后台解析）
  */
 import { Router } from 'express';
+import { env } from '../config/env';
+import { rateLimit } from '../middleware/rate-limit.middleware';
 import { generateService } from '../services/generate.service';
 import type { SectionContent } from '../types';
 
 export const generateRouter = Router();
 
-generateRouter.post('/doc', async (req, res, next) => {
+// LLM 端点（doc/section/outline）走 generate 桶；import 拉起后台解析走 upload 桶；
+// assemble 不调 LLM（下载前最后一步）不限流
+const generateLimiter = rateLimit('generate', env.rateLimitGeneratePerWindow);
+const importLimiter = rateLimit('upload', env.rateLimitUploadPerWindow);
+
+generateRouter.post('/doc', generateLimiter, async (req, res, next) => {
   try {
     const { title, outline, context } = req.body as {
       title?: string;
@@ -33,7 +40,7 @@ generateRouter.post('/doc', async (req, res, next) => {
   }
 });
 
-generateRouter.post('/section', async (req, res, next) => {
+generateRouter.post('/section', generateLimiter, async (req, res, next) => {
   try {
     const { docTitle, sectionTitle, level, requirement, context } = req.body as {
       docTitle?: string;
@@ -68,7 +75,7 @@ generateRouter.post('/assemble', async (req, res, next) => {
   }
 });
 
-generateRouter.post('/outline', async (req, res, next) => {
+generateRouter.post('/outline', generateLimiter, async (req, res, next) => {
   try {
     const { topic, sectionCount, style } = req.body as {
       topic?: string;
@@ -82,7 +89,7 @@ generateRouter.post('/outline', async (req, res, next) => {
   }
 });
 
-generateRouter.post('/:fileId/import', async (req, res, next) => {
+generateRouter.post('/:fileId/import', importLimiter, async (req, res, next) => {
   try {
     const result = await generateService.importToKnowledgeBase(req.params.fileId);
     res.status(202).json(result);

@@ -27,6 +27,12 @@ export async function parseFileInBackground(
     await fileService.updateStatus(fileId, 'parsed');
   } catch (err) {
     const message = (err as Error).message || '解析失败';
-    await fileService.updateStatus(fileId, 'failed', undefined, message);
+    try {
+      await fileService.updateStatus(fileId, 'failed', undefined, message);
+    } catch (updateErr) {
+      // 解析期间文件被删除 → updateStatus 抛 NotFoundError；
+      // 本函数 fire-and-forget（void 调用），异常会变成未处理拒绝杀死进程（Node 默认行为）
+      console.warn(`[parse] 记录状态更新失败（文件可能已删除）: ${fileId}`, updateErr);
+    }
   }
 }

@@ -4,6 +4,7 @@
  * - ValidationError 400 参数/文件校验失败
  * - NotFoundError   404 文件不存在
  * - AITimeoutError  504 AI 服务超时
+ * - StorageUnavailableError 503 元信息存储（Redis）不可用
  */
 
 export class HttpError extends Error {
@@ -41,5 +42,12 @@ export class AITimeoutError extends HttpError {
   constructor(message = 'AI 服务响应超时') {
     super(504, message);
     this.name = 'AITimeoutError';
+  }
+}
+
+export class StorageUnavailableError extends HttpError {
+  constructor(message: string) {
+    super(503, message);
+    this.name = 'StorageUnavailableError';
   }
 }

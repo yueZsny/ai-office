@@ -11,6 +11,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import { env } from '../config/env';
+import { rateLimit } from '../middleware/rate-limit.middleware';
 import { fileService } from '../services/file.service';
 import { parseFileInBackground } from '../services/parse.service';
 import { isValidExtension, isWithinSizeLimit } from '../utils/file.utils';
@@ -24,7 +25,8 @@ const upload = multer({
   limits: { fileSize: env.maxFileSizeMb * 1024 * 1024 },
 });
 
-uploadRouter.post('/', upload.single('file'), async (req, res, next) => {
+// 限流器必须在 multer 之前：被 429 拒绝时不解析请求体（大文件直连避免吃满内存）
+uploadRouter.post('/', rateLimit('upload', env.rateLimitUploadPerWindow), upload.single('file'), async (req, res, next) => {
   try {
     if (!req.file) {
       throw new ValidationError('缺少文件字段（file）');
