@@ -339,3 +339,115 @@ export async function importGeneratedToKb(
 export function downloadUrl(fileId: string): string {
   return `${http.defaults.baseURL}/download/${fileId}`;
 }
+
+/* ---------- LLM 模型设置（/api/settings/llm） ---------- */
+
+/** 供应商配置（对外：apiKey 打码） */
+export interface LlmProviderPublic {
+  id: string;
+  name: string;
+  baseUrl: string;
+  model: string;
+  /** 打码后的 key（如 sk-1****cdef），仅用于展示「已保存」 */
+  apiKeyMasked: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 全量设置（所有变更端点统一返回，前端一次 setState） */
+export interface LlmSettings {
+  providers: LlmProviderPublic[];
+  mainProviderId: string | null;
+  outlineProviderId: string | null;
+}
+
+/** 测试连接结果：ok=false 是正常诊断结果（如 key 错误），非异常 */
+export interface LlmTestResult {
+  ok: boolean;
+  latencyMs: number;
+  model: string;
+  message: string;
+}
+
+/** 生效配置查询（ai-service 不可用时 available=false） */
+export interface LlmEffective {
+  available: boolean;
+  source?: 'db' | 'env';
+  main?: {
+    providerName: string | null;
+    baseUrl: string;
+    model: string;
+    apiKeyMasked: string;
+  };
+  outline?: {
+    providerName: string | null;
+    baseUrl: string;
+    model: string;
+    apiKeyMasked: string;
+    /** true = 大纲槽位未指定，跟随主模型 */
+    fallbackToMain: boolean;
+  };
+  message?: string;
+}
+
+/** 全量设置（key 打码） */
+export async function getLlmSettings(): Promise<LlmSettings> {
+  const { data } = await http.get<LlmSettings>('/settings/llm');
+  return data;
+}
+
+/** 添加供应商（apiKey 必填） */
+export async function createLlmProvider(payload: {
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}): Promise<LlmSettings> {
+  const { data } = await http.post<LlmSettings>('/settings/llm/providers', payload);
+  return data;
+}
+
+/** 更新供应商（apiKey 留空 = 不修改） */
+export async function updateLlmProvider(
+  id: string,
+  payload: { name?: string; apiKey?: string; baseUrl?: string; model?: string }
+): Promise<LlmSettings> {
+  const { data } = await http.put<LlmSettings>(`/settings/llm/providers/${id}`, payload);
+  return data;
+}
+
+/** 删除供应商（后端联动清空引用它的槽位） */
+export async function deleteLlmProvider(id: string): Promise<LlmSettings> {
+  const { data } = await http.delete<LlmSettings>(`/settings/llm/providers/${id}`);
+  return data;
+}
+
+/** 设置主/大纲槽位（null = 回落环境变量 / 跟随主模型） */
+export async function updateLlmSlots(payload: {
+  mainProviderId: string | null;
+  outlineProviderId: string | null;
+}): Promise<LlmSettings> {
+  const { data } = await http.put<LlmSettings>('/settings/llm/slots', payload);
+  return data;
+}
+
+/** 测试连接（providerId 给定时复用其已存值；或直接传 apiKey/baseUrl/model） */
+export async function testLlmProvider(payload: {
+  providerId?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+}): Promise<LlmTestResult> {
+  const { data } = await http.post<LlmTestResult>('/settings/llm/test', payload);
+  return data;
+}
+
+/** 生效配置查询（软失败：ai-service 不可用时返回 {available:false}，不弹错误 toast） */
+export async function getLlmEffective(): Promise<LlmEffective> {
+  try {
+    const { data } = await http.get<LlmEffective>('/settings/llm/effective');
+    return data;
+  } catch {
+    return { available: false, message: 'AI 服务不可用' };
+  }
+}

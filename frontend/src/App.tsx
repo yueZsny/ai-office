@@ -1,6 +1,6 @@
 /**
  * 应用路由配置
- * 路由：/（首页）、/qa（问答）、/summary（摘要）、/convert（转换）、/generate（生成）
+ * 路由：/（首页）、/qa（问答）、/summary（摘要）、/convert（转换）、/generate（生成）、/settings（模型设置）
  */
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import Layout from './components/Layout';
@@ -9,6 +9,7 @@ import QaPage from './pages/QaPage';
 import SummaryPage from './pages/SummaryPage';
 import ConvertPage from './pages/ConvertPage';
 import GeneratePage from './pages/GeneratePage';
+import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="/summary" element={<SummaryPage />} />
           <Route path="/convert" element={<ConvertPage />} />
           <Route path="/generate" element={<GeneratePage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>
     </BrowserRouter>

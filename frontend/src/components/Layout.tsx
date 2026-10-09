@@ -9,6 +9,7 @@ import {
   FileTextOutlined,
   HomeOutlined,
   MessageOutlined,
+  SettingOutlined,
   SwapOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -20,6 +21,7 @@ const menuItems = [
   { key: '/summary', icon: <FileTextOutlined />, label: '文档摘要' },
   { key: '/convert', icon: <SwapOutlined />, label: 'PDF 转 Word' },
   { key: '/generate', icon: <EditOutlined />, label: '大纲生成' },
+  { key: '/settings', icon: <SettingOutlined />, label: '模型设置' },
 ];
 
 export default function Layout({ children }: { children: ReactNode }) {

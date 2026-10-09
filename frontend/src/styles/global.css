@@ -677,3 +677,57 @@ body {
   border: none;
   border-radius: var(--radius-sm);
 }
+
+/* 模型设置页：供应商列表行 */
+.settings-page__provider {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.settings-page__provider:last-child {
+  border-bottom: none;
+}
+
+.settings-page__provider-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-page__provider-name {
+  font-weight: 600;
+  color: var(--color-text-main);
+}
+
+.settings-page__provider-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.settings-page__provider-url {
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-page__provider-key {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.settings-page__provider-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* 设置页：当前生效配置行 */
+.settings-page__effective {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-top: 4px;
+}
