@@ -34,6 +34,9 @@ backend/data/files.json
 # ===== AI 服务本地模型（启动时自动下载，不入库）=====
 ai-service/data/models/
 
+# ===== 根目录离线维护脚本（向量重建/阈值验证，本地保留不入库；backend/scripts 的冒烟测试不受影响）=====
+/scripts/
+
 # ===== 日志 =====
 *.log
 npm-debug.log*
