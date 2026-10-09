@@ -16,6 +16,16 @@ import math
 from dataclasses import dataclass
 
 from app.config import settings
+from app.core.cache import (
+    cache_get,
+    cache_get_json,
+    cache_set,
+    cache_set_json,
+    llm_key,
+    search_key,
+    ttl_llm,
+    ttl_search,
+)
 from app.llm.client import LLMClient
 
 # embedding 模型惰性加载（首次使用才下载/加载）
@@ -287,7 +297,16 @@ class QAEngine:
         return messages
 
     def _retrieve_single(self, file_id: str, question: str) -> tuple[str | None, list[dict]]:
-        """单文件检索：top-5 → 阈值过滤。返回 (上下文|None, 命中列表)"""
+        """单文件检索：top-5 → 阈值过滤。返回 (上下文|None, 命中列表)
+
+        检索是纯函数（fileId 每次解析为新 uuid、内容不可变），结果按
+        (fileId, question) 缓存 1h——同一问题反复问（前端追问）免重算 question embedding。
+        """
+        key = search_key([file_id], question)
+        cached = cache_get_json(key)
+        if cached is not None:
+            return cached.get("context"), cached.get("hits", [])
+
         results = self._store.query(file_id, question, top_k=5)
         hits = [
             {
@@ -305,12 +324,23 @@ class QAEngine:
 
         top = _filter_relevant(hits)
         if not top:
+            cache_set_json(key, {"context": None, "hits": []}, ttl_search())  # 未命中同样缓存
             return None, []
-        return "\n\n".join(h["text"] for h in top), top
+        context = "\n\n".join(h["text"] for h in top)
+        cache_set_json(key, {"context": context, "hits": top}, ttl_search())
+        return context, top
 
     def _retrieve_multi(self, file_ids: list[str], question: str) -> tuple[str | None, list[dict]]:
         """多文件检索：问题向量只编码一次 → 逐 collection 检索（每文档 top-3）→
-        阈值过滤 → 合并按距离排序取整体 top-8。返回 (上下文|None, 命中列表)"""
+        阈值过滤 → 合并按距离排序取整体 top-8。返回 (上下文|None, 命中列表)
+
+        检索是纯函数，结果按 (排序 fileIds, question) 缓存 1h（同 _retrieve_single）。
+        """
+        key = search_key(file_ids, question)
+        cached = cache_get_json(key)
+        if cached is not None:
+            return cached.get("context"), cached.get("hits", [])
+
         model = _get_embedding_model()
         q_emb = model.encode(question, normalize_embeddings=True).tolist()
 
@@ -340,10 +370,12 @@ class QAEngine:
 
         top = _filter_relevant(hits)
         if not top:
+            cache_set_json(key, {"context": None, "hits": []}, ttl_search())  # 未命中同样缓存
             return None, []
         top.sort(key=lambda h: h["distance"])
         top = top[:8]
         context = "\n\n".join(f'【来源：《{h["filename"]}》】\n{h["text"]}' for h in top)
+        cache_set_json(key, {"context": context, "hits": top}, ttl_search())
         return context, top
 
     @staticmethod
@@ -382,6 +414,10 @@ class QAEngine:
 
 # ---------- 摘要 ----------
 
+# 摘要只取前 N 块（与文档总长度无关）；缓存 key 与 Prompt 共用同一切片，勿单独修改
+SUMMARY_CHUNK_LIMIT = 10
+
+
 class Summarizer:
     """摘要：取前 N 块 → 拼接 → LLM 生成 300-500 字摘要"""
 
@@ -395,12 +431,21 @@ class Summarizer:
         self._llm = llm
 
     def summarize(self, contents: list[str]) -> str:
-        """基于前 N 块生成摘要"""
-        content = "\n".join(contents[:10])  # 取前 10 块，避免内容过长
+        """基于前 N 块生成摘要（LLM 结果按内容指纹缓存，重复摘要零成本）"""
+        content = "\n".join(contents[:SUMMARY_CHUNK_LIMIT])  # 取前 N 块，避免内容过长
         if not content.strip():
             raise ValueError("文档内容为空，无法生成摘要")
+
+        # 缓存：同一文档重复摘要直接重放（fail-open，Redis 挂掉走原路径）
+        key = llm_key("summary", content)
+        cached = cache_get(key)
+        if cached is not None:
+            return cached
+
         prompt = self.PROMPT_TEMPLATE.format(content=content)
-        return self._llm.chat([{"role": "user", "content": prompt}])
+        summary = self._llm.chat([{"role": "user", "content": prompt}])
+        cache_set(key, summary, ttl_llm())
+        return summary
 
 
 # ---------- 对外入口（供 api 层调用） ----------

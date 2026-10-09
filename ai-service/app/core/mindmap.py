@@ -8,6 +8,7 @@
 """
 from app.llm.client import LLMClient, get_outline_client
 
+from app.core.cache import cache_get, cache_set, outline_key, ttl_llm
 from app.core.rag import get_store
 
 # 空标题路径的块（docx 首个标题之前 / PDF 全文）在 titles 路径下的兜底节点名
@@ -67,15 +68,24 @@ class MindmapLLM:
         self._llm = llm
 
     def outline(self, contents: list[str]) -> str:
-        """基于前 N 块生成 markdown 提纲"""
+        """基于前 N 块生成 markdown 提纲（LLM 结果按内容指纹缓存）"""
         content = "\n".join(contents[:10])  # 与摘要同取前 10 块，控制长度
         if not content.strip():
             raise ValueError("文档内容为空，无法生成思维导图")
+
+        # 缓存值存 _strip_fence 之后的成品，命中直接返回（不能再 strip 一次）
+        key = outline_key("mindmap", content)
+        cached = cache_get(key)
+        if cached is not None:
+            return cached
+
         prompt = self.PROMPT_TEMPLATE.format(content=content)
         markdown = self._llm.chat(
             [{"role": "user", "content": prompt}], temperature=0.3
         )
-        return self._strip_fence(markdown)
+        result = self._strip_fence(markdown)
+        cache_set(key, result, ttl_llm())
+        return result
 
     @staticmethod
     def _strip_fence(markdown: str) -> str:
@@ -124,9 +134,18 @@ def generate_topic_outline(topic: str, section_count: int = 5, style: str | None
     prompt = TOPIC_OUTLINE_PROMPT_TEMPLATE.format(
         section_count=section_count, style_req=style_req, topic=topic.strip()
     )
+
+    # 缓存：同一主题/章节数/风格重复点「AI 帮我想大纲」直接重放（t=0.3 近似确定性）
+    key = outline_key("topic-outline", topic.strip(), str(section_count), style or "")
+    cached = cache_get(key)
+    if cached is not None:
+        return cached
+
     # 大纲是中间产物，走 outline 专用客户端（可配置便宜/免费模型，未配置回落主模型）
     markdown = get_outline_client().chat([{"role": "user", "content": prompt}], temperature=0.3)
-    return MindmapLLM._strip_fence(markdown)
+    result = MindmapLLM._strip_fence(markdown)
+    cache_set(key, result, ttl_llm())
+    return result
 
 
 # ---------- 对外入口（供 api 层调用） ----------

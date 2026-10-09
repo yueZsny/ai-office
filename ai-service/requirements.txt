@@ -9,3 +9,5 @@ sentence-transformers
 rapidocr
 openai
 python-dotenv
+redis>=5.0
+psycopg2-binary

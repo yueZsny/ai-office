@@ -30,6 +30,8 @@ from docx.shared import Pt
 
 from app.llm.client import LLMClient
 
+from app.core.cache import cache_get, cache_set, llm_key, ttl_llm
+
 # 大纲条目层级解析：'# 章' / '## 节' / '### 小节'；无前缀视为 1 级
 _OUTLINE_RE = re.compile(r"^(#{1,3})\s*(.+)$")
 
@@ -142,12 +144,14 @@ class ContentGenerator:
         level: int,
         requirement: str = "",
         context: str = "",
+        use_cache: bool = True,
     ) -> str:
         """构造 Prompt 并调用 LLM，返回该节原始文本。
 
         - level 决定篇幅要求
         - requirement 为写作要求（大纲 > 行 / 重生成弹窗修改意见）
         - context 为前文要点（增量生成时已保留节的概括，保持口径一致）
+        - use_cache=False：单节重生成（「重新生成」按钮）必须出新结果，跳过缓存
         """
         if level == 1:
             depth_req = "2. 写 3-5 段正文，每段 2-4 句话；\n3. 正文结束后另起一行，写 2-3 条要点。"
@@ -167,7 +171,17 @@ class ContentGenerator:
             f"{ctx_line}"
             "格式：要点以 - 开头，其余行均为正文段落。"
         )
-        return self._llm.chat([{"role": "user", "content": prompt}])
+
+        # 缓存 LLM 原始输出（_parse_section 之前）：/ai/generate 与 /ai/generate/section
+        # 共享同一 key，同参数请求直接重放；重生成入口显式传 use_cache=False
+        key = llm_key("section", doc_title, section_title, str(level), requirement, context)
+        if use_cache:
+            cached = cache_get(key)
+            if cached is not None:
+                return cached
+        raw = self._llm.chat([{"role": "user", "content": prompt}])
+        cache_set(key, raw, ttl_llm())
+        return raw
 
     @staticmethod
     def _parse_section(title: str, raw: str, level: int) -> SectionContent:
@@ -285,12 +299,13 @@ def generate_section(
     """单节生成（供 /ai/generate/section 调用）：一次 LLM 调用，返回结构化内容。
 
     用于：单节重生成（含修改意见）、失败节重试。
+    use_cache=False：前端「重新生成」按钮期望出新结果，跳过缓存（虽然写入缓存，见 _ask_llm）。
     """
     if not doc_title.strip() or not section_title.strip():
         raise ValueError("文档标题与节标题均不能为空")
     level = max(1, min(3, int(level or 1)))
     content = ContentGenerator()
-    raw = content._ask_llm(doc_title, section_title, level, requirement, context)
+    raw = content._ask_llm(doc_title, section_title, level, requirement, context, use_cache=False)
     section = content._parse_section(section_title, raw, level)
     return {
         "title": section.title,

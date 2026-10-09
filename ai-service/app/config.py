@@ -42,5 +42,21 @@ class Settings:
     rag_min_similarity: float = float(os.getenv("RAG_MIN_SIMILARITY", "0.5"))
     rag_floor_similarity: float = float(os.getenv("RAG_FLOOR_SIMILARITY", "0.25"))
 
+    # Redis 缓存（fail-open：连不上只记日志，业务照常走原路径）
+    # db 1 与 backend 限流（db 0）隔离；未配置时禁用缓存
+    redis_url: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")
+    # LLM 结果缓存 TTL（小时）：summary / mindmap-llm / outline / section
+    redis_cache_ttl_hours: float = float(os.getenv("REDIS_CACHE_TTL_HOURS", "24"))
+    # 检索结果缓存 TTL（分钟）
+    redis_search_ttl_minutes: float = float(os.getenv("REDIS_SEARCH_TTL_MINUTES", "60"))
+
+    # LLM 动态设置存储（前端「模型设置」页写入 PostgreSQL，本服务只读，见 app/llm/config_store.py）
+    # 与 backend 同库（settings 表 key='llm'），可用 LLM_SETTINGS_DATABASE_URL 单独覆盖
+    llm_settings_database_url: str = os.getenv("LLM_SETTINGS_DATABASE_URL") or os.getenv(
+        "DATABASE_URL", "postgres://ai_office:ai_office@127.0.0.1:5432/ai_office"
+    )
+    # LLM 设置内存缓存 TTL（秒）：切模型后最多延迟这么久生效；0 = 每次实读（本地 ~1ms）
+    llm_settings_cache_ttl_seconds: float = float(os.getenv("LLM_SETTINGS_CACHE_TTL_SECONDS", "3"))
+
 
 settings = Settings()
