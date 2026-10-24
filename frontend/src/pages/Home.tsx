@@ -51,8 +51,9 @@ export default function Home() {
     <div>
       {/* 项目介绍 */}
       <div className="home-page__intro">
+        <span className="home-page__eyebrow">AI · 文档工作流</span>
         <h2 className="page-title">AI 文档处理工作台</h2>
-        <p className="text-secondary">
+        <p className="text-secondary home-page__lead">
           面向学生和白领的一站式 AI 文档工具：文档问答、智能摘要、PDF 转
           Word、大纲生成，点击下方卡片开始使用。
         </p>

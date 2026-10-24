@@ -13,6 +13,7 @@ import {
   SwapOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
+import AuroraBackground from './AuroraBackground';
 
 /** 导航菜单项：key 即路由路径 */
 const menuItems = [
@@ -32,20 +33,17 @@ export default function Layout({ children }: { children: ReactNode }) {
   const selectedKey = '/' + (location.pathname.split('/')[1] || '');
 
   return (
-    <AntdLayout style={{ minHeight: '100vh' }}>
+    <AntdLayout className="app-shell" style={{ minHeight: '100vh' }}>
+      <AuroraBackground />
       <AntdLayout.Header
+        className="app-header"
         style={{ display: 'flex', alignItems: 'center', paddingInline: 24 }}
       >
-        <div
-          style={{
-            color: '#fff',
-            fontSize: 18,
-            fontWeight: 600,
-            marginRight: 32,
-            whiteSpace: 'nowrap',
-          }}
-        >
-          AI 文档处理工作台
+        <div className="app-brand">
+          <span className="app-brand__mark">
+            <FileTextOutlined />
+          </span>
+          <span className="app-brand__text">AI 文档处理工作台</span>
         </div>
         <Menu
           theme="dark"
@@ -57,11 +55,12 @@ export default function Layout({ children }: { children: ReactNode }) {
         />
       </AntdLayout.Header>
       <AntdLayout.Content
-        style={{ padding: 24, maxWidth: 1200, width: '100%', margin: '0 auto' }}
+        className="app-content"
+        style={{ padding: '32px 24px 48px', maxWidth: 1200, width: '100%', margin: '0 auto' }}
       >
         {children}
       </AntdLayout.Content>
-      <AntdLayout.Footer style={{ textAlign: 'center' }}>
+      <AntdLayout.Footer className="app-footer" style={{ textAlign: 'center' }}>
         AI 文档处理工作台 ©{new Date().getFullYear()}
       </AntdLayout.Footer>
     </AntdLayout>
