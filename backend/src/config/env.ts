@@ -34,6 +34,8 @@ export const env = {
   rateLimitWindowSeconds: Number(process.env.RATE_LIMIT_WINDOW_SECONDS || 60),
   /** 问答/摘要/思维导图 每窗口每 IP 上限（SSE 长连接也按请求数计数） */
   rateLimitQaPerWindow: Number(process.env.RATE_LIMIT_QA_PER_MINUTE || 30),
+  /** 知识库全局搜索 每窗口每 IP 上限（向量检索，CPU 密集） */
+  rateLimitSearchPerWindow: Number(process.env.RATE_LIMIT_SEARCH_PER_MINUTE || 60),
   /** 文档生成 每窗口每 IP 上限 */
   rateLimitGeneratePerWindow: Number(process.env.RATE_LIMIT_GENERATE_PER_MINUTE || 30),
   /** 上传/加入知识库 每窗口每 IP 上限 */

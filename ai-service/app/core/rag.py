@@ -175,8 +175,17 @@ class VectorStore:
         return self.query_with_embedding(file_id, q_emb, top_k)
 
     def query_with_embedding(self, file_id: str, q_emb: list, top_k: int = 5) -> dict:
-        """用预编码的问题向量检索（多文件问答复用，问题向量只编码一次）"""
-        collection = self._client.get_or_create_collection(name=file_id)
+        """用预编码的问题向量检索（多文件问答复用，问题向量只编码一次）。
+
+        用 get_collection 而非 get_or_create：检索不存在的文档不应顺手创建空
+        collection（全局搜索会遍历全部文档，缺失数据时尤其明显）。
+        """
+        from chromadb.errors import NotFoundError
+
+        try:
+            collection = self._client.get_collection(name=file_id)
+        except (ValueError, NotFoundError) as e:
+            raise ValueError("该文件尚未解析，请先上传解析") from e
         if collection.count() == 0:
             raise ValueError("该文件尚未解析，请先上传解析")
 
@@ -463,6 +472,76 @@ def get_store() -> VectorStore:
 def delete_store(file_id: str) -> None:
     """删除向量数据（供 /ai/files 删除接口调用）"""
     get_store().delete(file_id)
+
+
+def search_chunks(
+    file_ids: list[str],
+    query: str,
+    per_doc_k: int = 3,
+    max_results: int = 20,
+) -> list[dict]:
+    """跨文档语义检索（供 /ai/search 调用，不调 LLM）。
+
+    - 问题向量只编码一次，逐 collection top-k 后按距离合并排序
+    - 复用 QA 的相关性阈值过滤，避免无关片段进入结果
+    - 返回对外结构：fileId/filename/page/chunkIndex/text/similarity
+      similarity 由 l2 距离换算回余弦（向量已归一化），仅用于前端展示
+    """
+    query = query.strip()
+    if not query:
+        raise ValueError("搜索内容不能为空")
+
+    # 与问答检索分开缓存（query 前缀区分），参数固定无需进 digest
+    key = search_key(file_ids, f"global-search:{query}")
+    cached = cache_get_json(key)
+    if cached is not None:
+        return cached
+
+    model = _get_embedding_model()
+    q_emb = model.encode(query, normalize_embeddings=True).tolist()
+
+    hits: list[dict] = []
+    for fid in file_ids:
+        try:
+            results = get_store().query_with_embedding(fid, q_emb, top_k=per_doc_k)
+        except ValueError:
+            # 单个文档向量缺失不应让整次搜索失败（文件可能在解析/被清理）
+            continue
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
+        dists = results["distances"][0]
+        for i, (doc, meta, dist) in enumerate(zip(docs, metas, dists)):
+            meta = meta or {}
+            hits.append(
+                {
+                    "fileId": fid,
+                    "filename": meta.get("filename") or fid,
+                    "page": meta.get("page"),
+                    "chunkIndex": meta.get("index", i),
+                    "text": doc,
+                    "distance": dist,
+                }
+            )
+
+    top = _filter_relevant(hits)
+    top.sort(key=lambda h: h["distance"])
+
+    results = []
+    for h in top[:max_results]:
+        # l2² = 2 - 2cos → cos = 1 - l2²/2；数值误差可能越界，裁剪到 [-1, 1]
+        similarity = max(-1.0, min(1.0, 1 - (h["distance"] ** 2) / 2))
+        results.append(
+            {
+                "fileId": h["fileId"],
+                "filename": h["filename"],
+                "page": h["page"],
+                "chunkIndex": h["chunkIndex"],
+                "text": h["text"],
+                "similarity": round(similarity, 4),
+            }
+        )
+    cache_set_json(key, results, ttl_search())
+    return results
 
 
 def build_and_store(file_id: str, pages: list, filename: str | None = None) -> list[Chunk]:

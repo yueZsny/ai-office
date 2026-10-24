@@ -1,12 +1,16 @@
 /**
  * 文件路由：
  * - GET    /api/files      知识库列表（全部已解析文档，倒序）
+ * - POST   /api/files/search    知识库全局搜索（跨文档向量检索，不调 LLM）
  * - GET    /api/files/:fileId   文件状态查询（fileService 无该记录时抛 404）
  * - DELETE /api/files/:fileId   删除知识库文档（记录 + backend 文件 + ai-service 向量库）
  */
 import { Router } from 'express';
+import { env } from '../config/env';
+import { rateLimit } from '../middleware/rate-limit.middleware';
 import { fileService } from '../services/file.service';
 import { aiClient } from '../services/ai-client.service';
+import { searchService } from '../services/search.service';
 
 export const filesRouter = Router();
 
@@ -25,6 +29,21 @@ filesRouter.get('/', async (_req, res, next) => {
         errorMessage: m.errorMessage ?? null,
       }))
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * 知识库全局搜索：{ query, fileIds? } → { results, searchedFileCount, truncated }
+ * - fileIds 省略 = 检索全部已解析文档（最近 50 篇）
+ * - 不调 LLM，仅向量检索，返回片段供前端定位/追问
+ */
+filesRouter.post('/search', rateLimit('search', env.rateLimitSearchPerWindow), async (req, res, next) => {
+  try {
+    const { query, fileIds } = req.body as { query?: string; fileIds?: string[] };
+    const result = await searchService.search(query ?? '', fileIds);
+    res.json(result);
   } catch (err) {
     next(err);
   }

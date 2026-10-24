@@ -80,6 +80,35 @@ export async function listFiles(): Promise<FileInfo[]> {
   return data;
 }
 
+/** 知识库全局搜索命中项（POST /files/search） */
+export interface KbSearchResult {
+  fileId: string;
+  filename: string;
+  /** 块起始页（1-based；docx 为段序号；旧数据为 null） */
+  page?: number | null;
+  chunkIndex: number;
+  text: string;
+  /** 余弦相似度（-1 ~ 1），仅用于展示参考 */
+  similarity: number;
+}
+
+export interface KbSearchResponse {
+  results: KbSearchResult[];
+  /** 实际参与检索的文档数 */
+  searchedFileCount: number;
+  /** 是否因文档过多截断了检索范围 */
+  truncated: boolean;
+}
+
+/** 知识库全局语义搜索（不调 LLM）；fileIds 省略 = 检索全部已解析文档 */
+export async function searchKnowledgeBase(
+  query: string,
+  fileIds?: string[]
+): Promise<KbSearchResponse> {
+  const { data } = await http.post<KbSearchResponse>('/files/search', { query, fileIds });
+  return data;
+}
+
 /** 删除知识库文档（后端联动清理向量库与文件） */
 export async function deleteFile(fileId: string): Promise<void> {
   await http.delete(`/files/${fileId}`);
@@ -93,20 +122,26 @@ type QaStreamEvent =
   | { type: 'error'; message: string };
 
 /**
- * 文档问答（流式 SSE，单/多文件，可携带历史实现连续问答）
- * - token 增量经 onToken 回调逐字下发；done 时 resolve { answer, sources }
+ * 文档问答（流式 SSE，单/多文件/全库，可携带历史实现连续问答）
+ * - token 增量经 onToken 回调逐字下发；done 时 resolve { answer, sources, conversationId }
+ * - conversationId 传入已有会话；首次提问不传，后端创建后经 X-Conversation-Id 返回
  * - 原生 fetch（axios 不适合流式）；错误提示复刻 http.ts 拦截器行为（toast + 带 status 的 Error）
  */
 export async function qaAskStream(
   fileIds: string[],
   question: string,
   history: ChatMessage[] = [],
-  callbacks: { onToken?: (chunk: string) => void } = {}
-): Promise<QaResult> {
+  callbacks: { onToken?: (chunk: string) => void; conversationId?: string } = {}
+): Promise<QaResult & { conversationId?: string }> {
   const res = await fetch(`${http.defaults.baseURL}/qa/ask`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ fileIds, question, history }),
+    body: JSON.stringify({
+      fileIds,
+      question,
+      history,
+      conversationId: callbacks.conversationId,
+    }),
   });
 
   // 非 2xx：校验/未解析/不存在等错误仍是 JSON 响应
@@ -131,6 +166,8 @@ export async function qaAskStream(
   } catch {
     // 头缺失/损坏时保持原值（前端另有 filename 兜底）
   }
+  // 会话 ID 同样经响应头下发（CORS exposedHeaders 已放行）
+  const conversationId = res.headers.get('X-Conversation-Id') ?? undefined;
 
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
@@ -161,7 +198,7 @@ export async function qaAskStream(
         message.error(event.message);
         throw new Error(event.message);
       }
-      if (event.type === 'done') return { answer, sources };
+      if (event.type === 'done') return { answer, sources, conversationId };
       if (event.type === 'token') {
         answer += event.content;
         callbacks.onToken?.(event.content);
@@ -173,7 +210,61 @@ export async function qaAskStream(
       }
     }
   }
-  return { answer, sources };
+  return { answer, sources, conversationId };
+}
+
+/** 会话摘要（GET /conversations 列表项） */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  /** null = 全库；数组 = 指定文档（对外 fileId） */
+  fileIds: string[] | null;
+  messageCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 会话消息 */
+export interface ConversationMessage {
+  id: string;
+  conversationId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  sources?: QaSource[] | null;
+  createdAt: string;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+/** 会话列表（最近活跃倒序） */
+export async function listConversations(): Promise<ConversationSummary[]> {
+  const { data } = await http.get<ConversationSummary[]>('/conversations');
+  return data;
+}
+
+/** 会话详情（含全部消息） */
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  const { data } = await http.get<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`);
+  return data;
+}
+
+/** 重命名会话 */
+export async function renameConversation(
+  id: string,
+  title: string
+): Promise<ConversationSummary> {
+  const { data } = await http.patch<ConversationSummary>(
+    `/conversations/${encodeURIComponent(id)}`,
+    { title }
+  );
+  return data;
+}
+
+/** 删除会话（消息级联删除） */
+export async function deleteConversation(id: string): Promise<void> {
+  await http.delete(`/conversations/${encodeURIComponent(id)}`);
 }
 
 /** 生成摘要 */

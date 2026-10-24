@@ -63,6 +63,36 @@ export interface SourceChunk {
   text: string;
 }
 
+/* ---------- 问答会话（PostgreSQL conversations / conversation_messages） ---------- */
+
+/** 会话摘要：GET /api/conversations 列表项 */
+export interface ConversationSummary {
+  id: string;
+  title: string;
+  /** 固定问答范围：null = 全库；数组 = 指定文档（对外 fileId） */
+  fileIds: string[] | null;
+  /** 消息条数（列表查询附带；创建/重命名等单独响应可缺省） */
+  messageCount?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 会话内的一条消息 */
+export interface ConversationMessage {
+  id: string;
+  conversationId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  /** assistant 消息的引用片段（fileId 已映射为对外 fileId） */
+  sources?: SourceChunk[] | null;
+  createdAt: string;
+}
+
+/** 会话详情：GET /api/conversations/:id */
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
 /** 问答已改为流式 SSE（POST /api/qa/ask），响应体事件契约见 ai-service app/api/qa.py */
 /** 摘要响应体：POST /api/qa/summary */
 export interface SummaryResponse {
@@ -75,6 +105,28 @@ export type MindmapMode = 'auto' | 'titles' | 'llm';
 /** 思维导图响应体：POST /api/qa/mindmap */
 export interface MindmapResponse {
   markdown: string;
+}
+
+/** 知识库全局搜索命中项：POST /api/files/search */
+export interface SearchResultItem {
+  /** 对外 fileId（前端拼下载/预览地址） */
+  fileId: string;
+  filename: string;
+  /** 块起始页（1-based；docx 为段序号；旧数据为 null） */
+  page?: number | null;
+  chunkIndex: number;
+  text: string;
+  /** 余弦相似度（-1 ~ 1），仅用于展示与排序参考 */
+  similarity: number;
+}
+
+/** 知识库全局搜索响应：POST /api/files/search */
+export interface SearchResponse {
+  results: SearchResultItem[];
+  /** 实际参与检索的文档数（未选择时按最近上限截取） */
+  searchedFileCount: number;
+  /** 是否因文档过多截断了检索范围 */
+  truncated: boolean;
 }
 
 /** 大纲生成请求体：POST /api/generate/doc */

@@ -140,6 +140,34 @@ export const aiClient = {
     return (await res.json()) as { summary: string };
   },
 
+  /** 跨文档语义检索（不调 LLM）：{ fileIds, query } → { results: [...] } */
+  async search(payload: { fileIds: string[]; query: string }): Promise<{
+    results: {
+      fileId: string;
+      filename?: string | null;
+      page?: number | null;
+      chunkIndex: number;
+      text: string;
+      similarity: number;
+    }[];
+  }> {
+    const res = await request('/ai/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return (await res.json()) as {
+      results: {
+        fileId: string;
+        filename?: string | null;
+        page?: number | null;
+        chunkIndex: number;
+        text: string;
+        similarity: number;
+      }[];
+    };
+  },
+
   /** 生成思维导图：{ fileId, mode? } → { markdown }（mode 默认 auto） */
   async mindmap(payload: {
     fileId: string;

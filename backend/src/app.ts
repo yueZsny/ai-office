@@ -16,6 +16,7 @@ import { qaRouter } from './routes/qa.routes';
 import { convertRouter } from './routes/convert.routes';
 import { generateRouter } from './routes/generate.routes';
 import { settingsRouter } from './routes/settings.routes';
+import { conversationsRouter } from './routes/conversations.routes';
 
 export const app = express();
 
@@ -23,7 +24,13 @@ export const app = express();
 app.set('trust proxy', env.trustProxy);
 
 // CORS：允许来源从环境变量读取（默认 localhost:3000 / 127.0.0.1:3000），便于部署到 VPS/局域网
-app.use(cors({ origin: env.corsOrigins }));
+// exposedHeaders：SSE 响应的文件映射/会话 ID 头必须显式暴露，否则浏览器 fetch 读不到
+app.use(
+  cors({
+    origin: env.corsOrigins,
+    exposedHeaders: ['X-Source-FileIds', 'X-Conversation-Id'],
+  })
+);
 // json limit 调大：assemble 接口回传全部分节内容（默认 100kb 会截断长文档）
 app.use(express.json({ limit: '5mb' }));
 
@@ -50,6 +57,7 @@ app.use('/api/upload', uploadRouter);
 app.use('/api/files', filesRouter);
 app.use('/api/download', downloadRouter);
 app.use('/api/qa', qaRouter);
+app.use('/api/conversations', conversationsRouter);
 app.use('/api/convert', convertRouter);
 app.use('/api/generate', generateRouter);
 app.use('/api/settings', settingsRouter);
