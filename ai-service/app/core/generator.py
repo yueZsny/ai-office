@@ -332,6 +332,7 @@ def _coerce_sections(raw: list[dict]) -> list[SectionContent]:
         sections.append(
             SectionContent(title=title, level=level, paragraphs=paragraphs, bullets=bullets)
         )
+        
     return sections
 
 

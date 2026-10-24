@@ -192,6 +192,8 @@ def get_effective_snapshot() -> dict[str, Any]:
         fallback = not (settings.llm_outline_model and settings.llm_outline_base_url)
 
     return {
+        # 能走到这里说明 ai-service 可达；backend 软失败时返回 available=false，前端据此区分
+        "available": True,
         "source": "db" if remote else "env",
         "main": {
             "providerName": main.provider_name,
