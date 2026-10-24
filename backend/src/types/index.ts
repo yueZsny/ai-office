@@ -94,9 +94,32 @@ export interface ConversationDetail extends ConversationSummary {
 }
 
 /** 问答已改为流式 SSE（POST /api/qa/ask），响应体事件契约见 ai-service app/api/qa.py */
-/** 摘要响应体：POST /api/qa/summary */
+
+/** 摘要篇幅：简短（约 150 字）/ 标准（300-500 字）/ 详细（800+ 字） */
+export type SummaryLength = 'brief' | 'standard' | 'detailed';
+
+/** 摘要风格：段落 / 要点列表 */
+export type SummaryStyle = 'paragraph' | 'bullets';
+
+/** 摘要选项（POST /api/qa/summary 可选参数） */
+export interface SummaryOptions {
+  length?: SummaryLength;
+  style?: SummaryStyle;
+  /** 重点关注主题（可选，≤200 字） */
+  focus?: string;
+}
+
+/** 摘要响应体：POST /api/qa/summary（覆盖信息为兼容旧 ai-service，均可缺省） */
 export interface SummaryResponse {
   summary: string;
+  /** single = 单次调用；map_reduce = 长文档分段归纳 */
+  mode?: 'single' | 'map_reduce';
+  /** 文档非空块总数 */
+  totalChunks?: number;
+  /** 本次实际纳入摘要的块数（超长文档会抽样） */
+  coveredChunks?: number;
+  /** 是否因文档过长而抽样（true 时 UI 需明确提示） */
+  truncated?: boolean;
 }
 
 /** 思维导图生成模式：auto（标题优先，无标题回退 LLM）/ titles / llm */

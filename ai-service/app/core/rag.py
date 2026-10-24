@@ -10,10 +10,12 @@ RAG 问答模块：分块 / 向量化 / 检索 / 生成
   合并按距离取整体 top-8；合并前后均按相关性阈值过滤（min 硬阈值，
   全池无命中时按 floor 兜底），杜绝无关块挤进引用
 - 生成：LLM 流式生成回答（token 增量），命中块作为 sources 事件返回（含 page/fileId/filename）
-- 摘要：提取前 N 块 → 拼接 → LLM 生成 300-500 字摘要
+- 摘要：短文档单次调用；长文档按组分段摘要后合并（map-reduce），支持篇幅/风格/重点选项
 """
 import math
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Literal
 
 from app.config import settings
 from app.core.cache import (
@@ -196,10 +198,32 @@ class VectorStore:
         )
 
     def get_all(self, file_id: str) -> list[str]:
-        """取回该文件的全部文本块（用于摘要）"""
-        collection = self._client.get_or_create_collection(name=file_id)
-        data = collection.get(include=["documents"])
-        return data["documents"]
+        """取回该文件的全部文本块（用于摘要），按块 index 还原原文顺序。
+
+        Chroma `get()` 的返回顺序不保证与写入顺序一致，而摘要分段依赖原文顺序，
+        因此按 metadata.index 排序；旧数据缺 index 时按返回位置兜底。
+        用 get_collection 而非 get_or_create：文件不存在时抛「尚未解析」，
+        不应顺手创建一个空 collection。
+        """
+        from chromadb.errors import NotFoundError
+
+        try:
+            collection = self._client.get_collection(name=file_id)
+        except (ValueError, NotFoundError) as e:
+            raise ValueError("该文件尚未解析，请先上传解析") from e
+
+        data = collection.get(include=["documents", "metadatas"])
+        docs = data["documents"] or []
+        metas = data["metadatas"] or []
+        entries = list(zip(docs, metas))
+
+        def sort_key(item):
+            pos, (_, meta) = item
+            idx = (meta or {}).get("index")
+            return (idx if isinstance(idx, int) else pos, pos)
+
+        ordered = [entry for _, entry in sorted(enumerate(entries), key=sort_key)]
+        return [doc for doc, _ in ordered if isinstance(doc, str)]
 
     def get_all_with_meta(self, file_id: str) -> list[dict]:
         """取回该文件的全部文本块及元数据（用于思维导图 titles 路径）"""
@@ -423,38 +447,345 @@ class QAEngine:
 
 # ---------- 摘要 ----------
 
-# 摘要只取前 N 块（与文档总长度无关）；缓存 key 与 Prompt 共用同一切片，勿单独修改
-SUMMARY_CHUNK_LIMIT = 10
+# 摘要 Prompt / 缓存语义变化时递增，避免命中旧版本结果
+SUMMARY_CACHE_VERSION = "v2"
+# 单次 LLM 调用可容纳的块数；超过则走 map-reduce
+SUMMARY_SINGLE_MAX = 10
+# map-reduce 每组的块数
+SUMMARY_GROUP_SIZE = 10
+# 同步请求的覆盖上限（4 组 × 10 块）：120s 超时下的安全阀；超长文档均匀抽样
+SUMMARY_MAX_CHUNKS = 40
+# map 阶段并发数：4 组单波跑完，避免多波叠加撞超时
+SUMMARY_MAP_WORKERS = 4
+
+_SUMMARY_LENGTHS = ("brief", "standard", "detailed")
+_SUMMARY_STYLES = ("paragraph", "bullets")
+_SUMMARY_FOCUS_MAX_CHARS = 200
+
+
+@dataclass(frozen=True)
+class SummaryOptions:
+    """摘要选项：篇幅 / 风格 / 重点关注（API 与核心共用）"""
+
+    length: Literal["brief", "standard", "detailed"] = "standard"
+    style: Literal["paragraph", "bullets"] = "paragraph"
+    focus: str = ""
+
+    @classmethod
+    def parse(
+        cls,
+        length: object = None,
+        style: object = None,
+        focus: object = None,
+    ) -> "SummaryOptions":
+        """统一校验并归一化选项；非法值抛 ValueError（由 API 层映射 400）"""
+        raw_length = "standard" if length is None else length
+        if not isinstance(raw_length, str) or raw_length not in _SUMMARY_LENGTHS:
+            raise ValueError("length 参数无效，仅支持 brief/standard/detailed")
+
+        raw_style = "paragraph" if style is None else style
+        if not isinstance(raw_style, str) or raw_style not in _SUMMARY_STYLES:
+            raise ValueError("style 参数无效，仅支持 paragraph/bullets")
+
+        raw_focus = "" if focus is None else focus
+        if not isinstance(raw_focus, str):
+            raise ValueError("focus 必须是字符串")
+        raw_focus = " ".join(raw_focus.split())
+        if len(raw_focus) > _SUMMARY_FOCUS_MAX_CHARS:
+            raise ValueError(f"focus 不能超过 {_SUMMARY_FOCUS_MAX_CHARS} 字")
+
+        return cls(raw_length, raw_style, raw_focus)
+
+
+@dataclass(frozen=True)
+class SummarySelection:
+    """摘要输入分组：single 时 1 组；map-reduce 时多组（可含抽样窗口）"""
+
+    groups: list[list[str]]
+    total_chunks: int
+    covered_chunks: int
+    truncated: bool
+
+    @property
+    def mode(self) -> Literal["single", "map_reduce"]:
+        return "single" if len(self.groups) == 1 else "map_reduce"
+
+
+@dataclass(frozen=True)
+class SummaryResult:
+    """摘要结果 + 覆盖信息（供前端提示长文档抽样）"""
+
+    summary: str
+    mode: Literal["single", "map_reduce"]
+    total_chunks: int
+    covered_chunks: int
+    truncated: bool
+
+
+def select_summary_groups(
+    contents: list[str],
+    group_size: int = SUMMARY_GROUP_SIZE,
+    max_chunks: int = SUMMARY_MAX_CHUNKS,
+) -> SummarySelection:
+    """把摘要输入切成 map-reduce 分组。
+
+    - ≤ SUMMARY_SINGLE_MAX 块：单组，单次 LLM 调用
+    - ≤ max_chunks 块：按 group_size 顺序分组，全量覆盖
+    - > max_chunks 块：取 max_chunks // group_size 个连续窗口，首窗从 0 开始、
+      末窗覆盖最后一块，窗口之间尽量均匀；truncated=True。
+      按窗口保持分组（不扁平化后重新切分），避免切断窗口内的上下文。
+    """
+    cleaned = [c for c in contents if isinstance(c, str) and c.strip()]
+    total = len(cleaned)
+    if total == 0:
+        raise ValueError("文档内容为空，无法生成摘要")
+
+    if total <= SUMMARY_SINGLE_MAX:
+        groups = [cleaned]
+    elif total <= max_chunks:
+        groups = [cleaned[i : i + group_size] for i in range(0, total, group_size)]
+    else:
+        group_count = max(1, max_chunks // group_size)
+        last_start = max(0, total - group_size)
+        starts: list[int] = []
+        for i in range(group_count):
+            start = (
+                round(i * last_start / (group_count - 1)) if group_count > 1 else 0
+            )
+            start = max(0, min(last_start, start))
+            if start not in starts:
+                starts.append(start)
+        starts.sort()
+        groups = [cleaned[s : s + group_size] for s in starts]
+
+    covered = sum(len(group) for group in groups)
+    return SummarySelection(
+        groups=groups,
+        total_chunks=total,
+        covered_chunks=covered,
+        truncated=covered < total,
+    )
 
 
 class Summarizer:
-    """摘要：取前 N 块 → 拼接 → LLM 生成 300-500 字摘要"""
+    """摘要：短文档单次调用；长文档分段 map-reduce 后合并。
 
-    PROMPT_TEMPLATE = """你是一个文档摘要助手。请基于以下文档内容生成 300-500 字的摘要，概括文档的核心观点。
+    并发约定：所有缓存 key 计算与 Redis 读写都在主线程完成，worker 线程只执行
+    LLM 调用——LLM 配置读取共用一条 psycopg2 连接（config_store），不是线程安全的。
+    """
 
+    LENGTH_INSTRUCTIONS = {
+        "brief": "篇幅控制在 150-200 字，只保留最核心的结论。",
+        "standard": "篇幅 300-500 字，覆盖主要内容与关键结论。",
+        "detailed": "篇幅不少于 800 字（建议 800-1200 字），分层次展开背景、关键细节、数据与结论。",
+    }
+    STYLE_INSTRUCTIONS = {
+        "paragraph": "使用连贯段落输出，段落之间空一行；不要使用 Markdown 标题或列表。",
+        "bullets": "使用要点列表输出：每个要点单独一行、以「- 」开头，每条 1-2 句；不要输出段落。",
+    }
+    MAP_LENGTH_HINTS = {
+        "brief": "100-150 字",
+        "standard": "150-250 字",
+        "detailed": "250-400 字",
+    }
+
+    SINGLE_PROMPT_TEMPLATE = """你是一位文档摘要助手。请仅基于以下文档内容生成摘要，不要编造文档中不存在的信息。
+要求：
+1. {length_instruction}
+2. {style_instruction}
+3. 概括文档的核心观点、关键事实与结论。
+{focus_line}
 [文档内容]
 {content}
+"""
+
+    MAP_PROMPT_TEMPLATE = """你是一位文档摘要助手。以下内容是一份长文档的一个片段。
+请仅基于该片段生成简明摘要（{length_hint}），保留关键事实、数据和结论，不要编造。
+{focus_line}
+只输出摘要正文，不要开场白或解释。
+[文档内容]
+{content}
+"""
+
+    REDUCE_PROMPT_TEMPLATE = """你是一位文档摘要助手。以下是对同一份长文档按顺序分段生成的摘要。
+请仅基于这些分段摘要整合出一份完整摘要，不要编造未出现的信息；合并重复内容，保留关键事实、数据与结论。
+要求：
+1. {length_instruction}
+2. {style_instruction}
+3. 体现文档的整体脉络，不要写成简单的分段罗列。
+{focus_line}
+{sampling_note}
+[分段摘要]
+{partials}
 """
 
     def __init__(self, llm: LLMClient) -> None:
         self._llm = llm
 
-    def summarize(self, contents: list[str]) -> str:
-        """基于前 N 块生成摘要（LLM 结果按内容指纹缓存，重复摘要零成本）"""
-        content = "\n".join(contents[:SUMMARY_CHUNK_LIMIT])  # 取前 N 块，避免内容过长
-        if not content.strip():
-            raise ValueError("文档内容为空，无法生成摘要")
+    def summarize(
+        self, contents: list[str], options: SummaryOptions | None = None
+    ) -> SummaryResult:
+        """生成摘要（结果按选项 + 内容指纹缓存，重复请求零成本）"""
+        options = options or SummaryOptions.parse()
+        selection = select_summary_groups(contents)
+        selected = [chunk for group in selection.groups for chunk in group]
+        content = "\n".join(selected)
 
-        # 缓存：同一文档重复摘要直接重放（fail-open，Redis 挂掉走原路径）
-        key = llm_key("summary", content)
+        # 缓存 key 在主线程算好；版本 + 全部选项 + 覆盖信息共同决定结果
+        key = llm_key(
+            "summary",
+            SUMMARY_CACHE_VERSION,
+            selection.mode,
+            str(selection.total_chunks),
+            str(selection.covered_chunks),
+            options.length,
+            options.style,
+            options.focus,
+            content,
+        )
         cached = cache_get(key)
-        if cached is not None:
-            return cached
+        if cached is not None and cached.strip():
+            return self._result(cached.strip(), selection)
 
-        prompt = self.PROMPT_TEMPLATE.format(content=content)
-        summary = self._llm.chat([{"role": "user", "content": prompt}])
+        if selection.mode == "single":
+            prompt = self._single_prompt(selection.groups[0], options)
+            summary = self._ask(prompt)
+        else:
+            partials = self._map_partials(selection, options)
+            summary = self._ask(self._reduce_prompt(partials, selection, options))
+
+        summary = summary.strip()
+        if not summary:
+            raise RuntimeError("摘要生成失败：模型返回为空")
         cache_set(key, summary, ttl_llm())
-        return summary
+        return self._result(summary, selection)
+
+    @staticmethod
+    def _result(summary: str, selection: SummarySelection) -> SummaryResult:
+        return SummaryResult(
+            summary=summary,
+            mode=selection.mode,
+            total_chunks=selection.total_chunks,
+            covered_chunks=selection.covered_chunks,
+            truncated=selection.truncated,
+        )
+
+    def _ask(self, prompt: str) -> str:
+        """单次 LLM 调用（主线程调用；worker 只读调用也走这里）"""
+        return self._llm.chat(
+            [{"role": "user", "content": prompt}], temperature=0.3
+        )
+
+    def _map_partials(
+        self, selection: SummarySelection, options: SummaryOptions
+    ) -> list[str]:
+        """并发生成各分段摘要；缓存命中/写入均在主线程。
+
+        成功的分段立即落缓存：即使另一组失败，重试时也只需补跑失败组。
+        """
+        prompts = [self._map_prompt(group, options) for group in selection.groups]
+        keys = [
+            llm_key(
+                "summary-map",
+                SUMMARY_CACHE_VERSION,
+                options.length,
+                options.focus,
+                "\n".join(group),
+            )
+            for group in selection.groups
+        ]
+
+        partials: dict[int, str] = {}
+        missing: list[tuple[int, str, str]] = []
+        for idx, (prompt, key) in enumerate(zip(prompts, keys)):
+            cached = cache_get(key)
+            if cached is not None and cached.strip():
+                partials[idx] = cached.strip()
+            else:
+                missing.append((idx, prompt, key))
+
+        if missing:
+            futures: dict = {}
+            with ThreadPoolExecutor(
+                max_workers=min(SUMMARY_MAP_WORKERS, len(missing))
+            ) as pool:
+                for idx, prompt, key in missing:
+                    # worker 只做 LLM 调用；key/缓存/配置读取都留在主线程
+                    futures[pool.submit(self._ask, prompt)] = (idx, key)
+
+                errors: list[tuple[int, Exception]] = []
+                for future, (idx, key) in futures.items():
+                    try:
+                        text = (future.result() or "").strip()
+                    except Exception as e:  # noqa: BLE001 - 汇总后统一转 RuntimeError
+                        errors.append((idx, e))
+                        continue
+                    if not text:
+                        errors.append((idx, RuntimeError("模型返回为空")))
+                        continue
+                    partials[idx] = text
+                    cache_set(key, text, ttl_llm())
+
+            if errors:
+                idx, err = min(errors, key=lambda item: item[0])
+                raise RuntimeError(f"分段摘要第 {idx + 1} 组失败: {err}")
+
+        return [partials[i] for i in range(len(selection.groups))]
+
+    def _single_prompt(self, contents: list[str], options: SummaryOptions) -> str:
+        return self.SINGLE_PROMPT_TEMPLATE.format(
+            length_instruction=self.LENGTH_INSTRUCTIONS[options.length],
+            style_instruction=self.STYLE_INSTRUCTIONS[options.style],
+            focus_line=self._focus_line(options.focus),
+            content="\n".join(contents),
+        )
+
+    def _map_prompt(self, contents: list[str], options: SummaryOptions) -> str:
+        return self.MAP_PROMPT_TEMPLATE.format(
+            length_hint=self.MAP_LENGTH_HINTS[options.length],
+            focus_line=self._map_focus_line(options.focus),
+            content="\n".join(contents),
+        )
+
+    def _reduce_prompt(
+        self,
+        partials: list[str],
+        selection: SummarySelection,
+        options: SummaryOptions,
+    ) -> str:
+        labeled = "\n\n".join(
+            f"第 {index + 1} 段：\n{text}" for index, text in enumerate(partials)
+        )
+        sampling_note = (
+            "注意：以上内容是从原文中均匀抽取的部分片段，不是全文；请勿声称已覆盖全文。"
+            if selection.truncated
+            else ""
+        )
+        return self.REDUCE_PROMPT_TEMPLATE.format(
+            length_instruction=self.LENGTH_INSTRUCTIONS[options.length],
+            style_instruction=self.STYLE_INSTRUCTIONS[options.style],
+            focus_line=self._focus_line(options.focus),
+            sampling_note=sampling_note,
+            partials=labeled,
+        )
+
+    @staticmethod
+    def _focus_line(focus: str) -> str:
+        """最终摘要的 focus 要求（编号固定为 4，和模板里的 1-3 衔接）"""
+        if not focus:
+            return ""
+        return (
+            f"4. 重点围绕「{focus}」进行总结，除必要背景外不要展开无关内容；"
+            f"若文档未涉及该主题，请直接说明「文档中未找到与「{focus}」相关的内容」，"
+            "不要编造或用无关内容填充。"
+        )
+
+    @staticmethod
+    def _map_focus_line(focus: str) -> str:
+        """分段摘要的 focus 要求（只提示重点，不要求整段围绕）"""
+        if not focus:
+            return ""
+        return f"重点关注「{focus}」；若本片段未涉及该主题，可简要说明本片段与该主题无关。"
 
 
 # ---------- 对外入口（供 api 层调用） ----------
@@ -560,9 +891,17 @@ def stream_qa(file_ids: list[str], question: str, history: list[dict] | None = N
     return engine.stream_single(file_ids[0], question, history)
 
 
-def summarize(file_id: str) -> str:
-    """摘要入口：从向量库取全部块 → LLM 生成摘要（供 /ai/summary 接口调用）"""
+def summarize(
+    file_id: str, options: SummaryOptions | None = None
+) -> SummaryResult:
+    """摘要入口：从向量库按原文顺序取块 → 单次或 map-reduce 摘要。
+
+    供 /ai/summary 接口调用；options 由 API 层先经 SummaryOptions.parse 校验。
+    """
+    if not file_id or not file_id.strip():
+        raise ValueError("fileId 不能为空")
+    opts = options or SummaryOptions.parse()
     all_texts = get_store().get_all(file_id)
     if not all_texts:
         raise ValueError("该文件尚未解析，请先上传解析")
-    return Summarizer(LLMClient()).summarize(all_texts)
+    return Summarizer(LLMClient()).summarize(all_texts, opts)

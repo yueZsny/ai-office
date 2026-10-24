@@ -5,7 +5,8 @@
  *                          fileId/fileIds 均省略 = 全库问答（最近 50 篇已解析文档）
  *                          响应 text/event-stream：token* → sources → done
  *                          响应头：X-Conversation-Id（新建/复用会话）、X-Source-FileIds（引用映射）
- * - POST /api/qa/summary  生成摘要：{ fileId } → { summary }
+ * - POST /api/qa/summary  生成摘要：{ fileId, length?, style?, focus? }
+ *                          → { summary, mode?, totalChunks?, coveredChunks?, truncated? }
  * - POST /api/qa/mindmap  生成思维导图：{ fileId, mode? } → { markdown }
  */
 import { Router } from 'express';
@@ -60,8 +61,18 @@ qaRouter.post('/ask', qaLimiter, async (req, res, next) => {
 
 qaRouter.post('/summary', qaLimiter, async (req, res, next) => {
   try {
-    const { fileId } = req.body as { fileId?: string };
-    const result = await qaService.summarize(fileId ?? '');
+    const body = (req.body ?? {}) as {
+      fileId?: unknown;
+      length?: unknown;
+      style?: unknown;
+      focus?: unknown;
+    };
+    const fileId = typeof body.fileId === 'string' ? body.fileId : '';
+    const result = await qaService.summarize(fileId, {
+      length: body.length,
+      style: body.style,
+      focus: body.focus,
+    });
     res.json(result);
   } catch (err) {
     next(err);

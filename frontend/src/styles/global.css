@@ -673,6 +673,59 @@ body {
   gap: 8px;
 }
 
+/* 摘要页：选项区（篇幅/风格/重点） */
+.summary-page__options {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+  display: grid;
+  gap: 12px;
+}
+
+.summary-page__option-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.summary-page__option-row .form-label {
+  margin-bottom: 0;
+  min-width: 112px;
+}
+
+.summary-page__option-hint {
+  font-size: 12px;
+}
+
+.summary-page__focus-input {
+  flex: 1;
+  min-width: 220px;
+}
+
+.summary-page__options-note {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* 摘要页：结果卡片操作区（复制 / 下载 Markdown / 下载 Word / 折叠） */
+.summary-page__result-actions {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 摘要页：生成选项与长文档覆盖说明 */
+.summary-page__coverage {
+  margin-bottom: 12px;
+}
+
+.summary-page__coverage p {
+  margin: 2px 0;
+  font-size: 12px;
+}
+
 /* 生成页：大纲语法提示（常驻，紧贴标签下方） */
 .generate-page__hint {
   margin: -4px 0 8px;

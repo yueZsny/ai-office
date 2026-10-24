@@ -42,9 +42,31 @@ export interface QaResult {
   sources: QaSource[];
 }
 
-/** 摘要结果（POST /qa/summary 响应） */
+/** 摘要篇幅：简短（约 150 字）/ 标准（300-500 字）/ 详细（800+ 字） */
+export type SummaryLength = 'brief' | 'standard' | 'detailed';
+
+/** 摘要风格：段落 / 要点列表 */
+export type SummaryStyle = 'paragraph' | 'bullets';
+
+/** 摘要选项（POST /qa/summary 可选参数） */
+export interface SummaryOptions {
+  length?: SummaryLength;
+  style?: SummaryStyle;
+  /** 重点关注主题（可选，≤200 字） */
+  focus?: string;
+}
+
+/** 摘要结果（POST /qa/summary 响应；覆盖信息兼容旧 ai-service，均可缺省） */
 export interface SummaryResult {
   summary: string;
+  /** single = 单次调用；map_reduce = 长文档分段归纳 */
+  mode?: 'single' | 'map_reduce';
+  /** 文档非空块总数 */
+  totalChunks?: number;
+  /** 本次实际纳入摘要的块数（超长文档会抽样） */
+  coveredChunks?: number;
+  /** 是否因文档过长而抽样（true 时 UI 明确提示） */
+  truncated?: boolean;
 }
 
 /** 思维导图结果（POST /qa/mindmap 响应，markdown 大纲为 markmap 原生输入格式） */
@@ -267,9 +289,17 @@ export async function deleteConversation(id: string): Promise<void> {
   await http.delete(`/conversations/${encodeURIComponent(id)}`);
 }
 
-/** 生成摘要 */
-export async function qaSummary(fileId: string): Promise<SummaryResult> {
-  const { data } = await http.post<SummaryResult>('/qa/summary', { fileId });
+/** 生成摘要（可配置篇幅/风格/重点；长文档由后端自动分段归纳） */
+export async function qaSummary(
+  fileId: string,
+  options: SummaryOptions = {}
+): Promise<SummaryResult> {
+  const { data } = await http.post<SummaryResult>('/qa/summary', {
+    fileId,
+    length: options.length ?? 'standard',
+    style: options.style ?? 'paragraph',
+    ...(options.focus ? { focus: options.focus } : {}),
+  });
   return data;
 }
 

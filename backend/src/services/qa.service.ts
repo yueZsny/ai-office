@@ -21,7 +21,9 @@ import type {
   MindmapMode,
   MindmapResponse,
   SourceChunk,
+  SummaryLength,
   SummaryResponse,
+  SummaryStyle,
 } from '../types';
 import { ConflictError, HttpError, ValidationError } from '../utils/errors';
 import { extractSseEvents, type SseEvent } from '../utils/sse';
@@ -36,6 +38,55 @@ export async function requireParsed(fileId: string) {
     throw new ConflictError(`文件「${meta.filename}」尚未解析，请等待解析完成`);
   }
   return meta;
+}
+
+const SUMMARY_LENGTHS: SummaryLength[] = ['brief', 'standard', 'detailed'];
+const SUMMARY_STYLES: SummaryStyle[] = ['paragraph', 'bullets'];
+const SUMMARY_FOCUS_MAX_CHARS = 200;
+
+/**
+ * 摘要选项归一化：缺省补默认值，非法值抛 400；focus 折叠空白并限长。
+ * 与 ai-service SummaryOptions.parse 保持同一套取值与错误文案。
+ */
+function normalizeSummaryOptions(input: {
+  length?: unknown;
+  style?: unknown;
+  focus?: unknown;
+}): { length: SummaryLength; style: SummaryStyle; focus?: string } {
+  const rawLength = input.length ?? 'standard';
+  if (
+    typeof rawLength !== 'string' ||
+    !SUMMARY_LENGTHS.includes(rawLength as SummaryLength)
+  ) {
+    throw new ValidationError('length 参数无效，仅支持 brief/standard/detailed');
+  }
+
+  const rawStyle = input.style ?? 'paragraph';
+  if (
+    typeof rawStyle !== 'string' ||
+    !SUMMARY_STYLES.includes(rawStyle as SummaryStyle)
+  ) {
+    throw new ValidationError('style 参数无效，仅支持 paragraph/bullets');
+  }
+
+  let focus: string | undefined;
+  if (input.focus !== undefined && input.focus !== null) {
+    if (typeof input.focus !== 'string') {
+      throw new ValidationError('focus 必须是字符串');
+    }
+    const normalized = input.focus.trim().replace(/\s+/g, ' ');
+    // 按 Unicode 码点计数，与 ai-service 的 len() 口径一致（emoji 不重复计 2）
+    if ([...normalized].length > SUMMARY_FOCUS_MAX_CHARS) {
+      throw new ValidationError(`focus 不能超过 ${SUMMARY_FOCUS_MAX_CHARS} 字`);
+    }
+    if (normalized) focus = normalized;
+  }
+
+  return {
+    length: rawLength as SummaryLength,
+    style: rawStyle as SummaryStyle,
+    ...(focus ? { focus } : {}),
+  };
 }
 
 /** 边转发上游 SSE、边累积回答并在 done 后落库的流 */
@@ -271,13 +322,35 @@ export const qaService = {
     return { stream, fileIdMap, conversationId };
   },
 
-  /** 生成摘要：校验 fileId → 调 ai-client.summary */
-  async summarize(fileId: string): Promise<SummaryResponse> {
+  /** 生成摘要：校验 fileId/选项 → 调 ai-client.summary（透传覆盖信息） */
+  async summarize(
+    fileId: string,
+    options: { length?: unknown; style?: unknown; focus?: unknown } = {}
+  ): Promise<SummaryResponse> {
     if (!fileId.trim()) throw new ValidationError('fileId 不能为空');
+    // 先校验选项：非法参数不查 PG、不调 ai-service
+    const resolved = normalizeSummaryOptions(options);
 
     const meta = await requireParsed(fileId);
-    const result = await aiClient.summary({ fileId: meta.aiFileId ?? meta.fileId });
-    return { summary: result.summary };
+    const result = await aiClient.summary({
+      fileId: meta.aiFileId ?? meta.fileId,
+      ...resolved,
+    });
+
+    // 覆盖信息是可选的（兼容旧 ai-service），逐项透传而不是只返 summary
+    return {
+      summary: result.summary,
+      ...(result.mode ? { mode: result.mode } : {}),
+      ...(typeof result.totalChunks === 'number'
+        ? { totalChunks: result.totalChunks }
+        : {}),
+      ...(typeof result.coveredChunks === 'number'
+        ? { coveredChunks: result.coveredChunks }
+        : {}),
+      ...(typeof result.truncated === 'boolean'
+        ? { truncated: result.truncated }
+        : {}),
+    };
   },
 
   /** 生成思维导图：校验 fileId → 调 ai-client.mindmap（mode 默认 auto） */

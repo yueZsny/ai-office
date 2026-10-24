@@ -6,7 +6,8 @@
  * 接口契约（ai-service 规格 6.2 节）：
  * - POST /ai/parse     multipart(file) → { fileId, text, chunks }
  * - POST /ai/qa        { fileId, question, history? } → { answer, sources }
- * - POST /ai/summary   { fileId } → { summary }
+ * - POST /ai/summary   { fileId, length?, style?, focus? }
+ *                      → { summary, mode?, totalChunks?, coveredChunks?, truncated? }
  * - POST /ai/mindmap   { fileId, mode? } → { markdown }
  * - POST /ai/convert   multipart(file) → { fileId, filePath, filename }
  * - POST /ai/generate  { title, outline, context? } → SSE: section_start → section_done*（含全文）→ done | error
@@ -18,7 +19,12 @@
  * 错误统一为 { error: { message } }
  */
 import { env } from '../config/env';
-import type { LlmEffectiveResponse, LlmTestResponse } from '../types';
+import type {
+  LlmEffectiveResponse,
+  LlmTestResponse,
+  SummaryOptions,
+  SummaryResponse,
+} from '../types';
 import { AITimeoutError, HttpError } from '../utils/errors';
 import { normalizeUploadName } from '../utils/filename';
 
@@ -130,14 +136,16 @@ export const aiClient = {
     });
   },
 
-  /** 生成摘要：{ fileId } → { summary } */
-  async summary(payload: { fileId: string }): Promise<{ summary: string }> {
+  /** 生成摘要：{ fileId, length?, style?, focus? } → { summary, ...覆盖信息 } */
+  async summary(
+    payload: { fileId: string } & SummaryOptions
+  ): Promise<SummaryResponse> {
     const res = await request('/ai/summary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return (await res.json()) as { summary: string };
+    return (await res.json()) as SummaryResponse;
   },
 
   /** 跨文档语义检索（不调 LLM）：{ fileIds, query } → { results: [...] } */
