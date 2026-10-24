@@ -41,7 +41,8 @@ downloadRouter.get('/:fileId', async (req, res, next) => {
       throw new NotFoundError('该文件尚无可用内容');
     }
 
-    // 路径可能为共享目录相对路径（如 ../shared-data/processed/xxx.docx），统一解析为绝对路径
+    // 路径可能为 ai-service 侧写入的相对路径（如 ../backend/data/processed/xxx.docx，
+    // 相对 ai-service cwd 解析；backend cwd 下 path.resolve 恰好指向同一目录），统一解析为绝对路径
     const absPath = path.resolve(filePath);
 
     const downloadName = meta.processedPath

@@ -9,6 +9,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.venv/
+venv/
 
 # ===== 环境变量（密钥不入库）=====
 .env
@@ -16,26 +18,17 @@ __pycache__/
 !.env.example
 *.local
 
-# ===== 共享数据卷（上传文件 / 处理结果 / 向量库，运行时生成，不入库）=====
-shared-data/uploads/*
-shared-data/processed/*
-shared-data/vector/*
-!shared-data/uploads/.gitkeep
-!shared-data/processed/.gitkeep
-!shared-data/vector/.gitkeep
-
-# ===== 后端运行时数据（上传文件、处理结果、元信息）=====
+# ===== 数据目录（上传文件 / 处理结果 / 向量库，运行时生成，不入库；backend 与 ai-service 共享 backend/data）=====
 backend/data/uploads/*
 backend/data/processed/*
+backend/data/vector/*
 backend/data/files.json
 !backend/data/uploads/.gitkeep
 !backend/data/processed/.gitkeep
+!backend/data/vector/.gitkeep
 
-# ===== AI 服务本地模型（启动时自动下载，不入库）=====
-ai-service/data/models/
-
-# ===== 根目录离线维护脚本（向量重建/阈值验证，本地保留不入库；backend/scripts 的冒烟测试不受影响）=====
-/scripts/
+# ===== AI 服务运行时数据（本地模型启动时自动下载，不入库）=====
+ai-service/data/
 
 # ===== 日志 =====
 *.log

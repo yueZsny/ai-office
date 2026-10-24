@@ -1,25 +1,76 @@
 version: "3.8"
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=ai_office
+      - POSTGRES_PASSWORD=ai_office
+      - POSTGRES_DB=ai_office
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_office -d ai_office"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    # 不映射端口：仅容器网络内可达（本地开发用宿主机原生 PG16）
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]   # AOF 持久化：限流计数 + ai 缓存，fail-open（数据无需强保）
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    # 不映射端口：仅容器网络内可达（本地开发用宿主机的本机 Redis）
+
   ai-service:
     build: ./ai-service
     ports:
       - "8000:8000"
     volumes:
-      - ./shared-data:/app/data      # 与 backend 共享同一目录，实现文件流转
+      - ./backend/data:/app/data      # 与 backend 共享同一目录，实现文件流转
     env_file: ./ai-service/.env
+    environment:                      # environment 优先于 env_file
+      - CHROMA_DIR=/app/data/vector        # 覆盖 .env 里的本机相对路径（容器内 WORKDIR=/app，相对路径会错位）
+      - UPLOAD_DIR=/app/data/uploads
+      - PROCESSED_DIR=/app/data/processed
+      - REDIS_URL=redis://redis:6379/1   # db 1：缓存与 backend 限流（db 0）隔离
+      - DATABASE_URL=postgres://ai_office:ai_office@postgres:5432/ai_office   # 只读 settings 表（fail-open）
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   backend:
     build: ./backend
     ports:
       - "3001:3001"
     depends_on:
-      - ai-service
+      ai-service:
+        condition: service_started
+      redis:
+        condition: service_started   # 仅顺序依赖：限流 fail-open，Redis 不可用不阻断启动
+      postgres:
+        condition: service_healthy   # 启动 fail-fast：元信息事实源必须就绪
     environment:
       - AI_SERVICE_URL=http://ai-service:8000
+      - UPLOAD_DIR=/app/data/uploads        # 显式声明，与 ai-service 容器共用同一挂载点
+      - PROCESSED_DIR=/app/data/processed
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgres://ai_office:ai_office@postgres:5432/ai_office
+      - RATE_LIMIT_ENABLED=true
     volumes:
-      - ./shared-data:/app/data      # 与 ai-service 共享同一目录
-      - ./backend/data:/app/backend-data  # 挂载元信息（files.json）
+      - ./backend/data:/app/data      # 上传/结果文件（元信息存 PostgreSQL，首次启动自动从 Redis 一次性导入）
+    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -27,3 +78,7 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+
+volumes:
+  redis-data:
+  pg-data:
