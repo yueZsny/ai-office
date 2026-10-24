@@ -42,6 +42,12 @@ class Settings:
     rag_min_similarity: float = float(os.getenv("RAG_MIN_SIMILARITY", "0.5"))
     rag_floor_similarity: float = float(os.getenv("RAG_FLOOR_SIMILARITY", "0.25"))
 
+    # 扫描版 PDF OCR 兜底：页面文本少于阈值时渲染为图片走 rapidocr
+    # max_pages 是安全阀（OCR 慢，避免撞 backend 120s 超时）；超限直接报错让用户拆分文件
+    pdf_ocr_min_chars: int = int(os.getenv("PDF_OCR_MIN_CHARS", "20"))
+    pdf_ocr_max_pages: int = int(os.getenv("PDF_OCR_MAX_PAGES", "30"))
+    pdf_ocr_dpi: int = int(os.getenv("PDF_OCR_DPI", "200"))
+
     # Redis 缓存（fail-open：连不上只记日志，业务照常走原路径）
     # db 1 与 backend 限流（db 0）隔离；未配置时禁用缓存
     redis_url: str = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/1")

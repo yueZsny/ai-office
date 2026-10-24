@@ -8,6 +8,7 @@
 - 输出统一结构：{ pages: [{ pageIndex, text }] }
 """
 import os
+import tempfile
 from dataclasses import dataclass, field
 
 import fitz  # PyMuPDF
@@ -31,14 +32,48 @@ class ParseResult:
 
 
 def parse_pdf(src_path: str) -> ParseResult:
-    """解析 PDF：按页提取文本"""
+    """解析 PDF：按页提取文本；无文字层的页面渲染为图片走 OCR 兜底。
+
+    - 每页先取文本层，少于 PDF_OCR_MIN_CHARS 视为扫描页
+    - 扫描页数量超过 PDF_OCR_MAX_PAGES 时直接报错（OCR 慢，避免撞 backend 120s 超时）
+    - OCR 仍识别不出内容的页面保持空文本，由 parse_file 统一判断整份文档是否有效
+    """
     result = ParseResult()
     doc = fitz.open(src_path)  # 打开 PDF
     try:
-        for page in doc:  # 遍历每一页
-            result.pages.append(
-                PageText(page_index=page.number, text=page.get_text().strip())
+        pages = list(doc)
+        texts: list[str] = []
+        ocr_pages: list[int] = []
+
+        for idx, page in enumerate(pages):
+            text = page.get_text().strip()
+            texts.append(text)
+            if len(text) < settings.pdf_ocr_min_chars:
+                ocr_pages.append(idx)
+
+        if len(ocr_pages) > settings.pdf_ocr_max_pages:
+            raise ValueError(
+                f"检测到 {len(ocr_pages)} 页无文字层内容，超过 OCR 上限 "
+                f"{settings.pdf_ocr_max_pages} 页；请拆分文件后重试"
+                f"（可调整 PDF_OCR_MAX_PAGES）"
             )
+
+        if ocr_pages:
+            print(
+                f"[parser] PDF 有 {len(ocr_pages)} 页无文本层，"
+                f"开始 OCR（dpi={settings.pdf_ocr_dpi}）"
+            )
+            for idx in ocr_pages:
+                try:
+                    text = _ocr_pdf_page(pages[idx], settings.pdf_ocr_dpi)
+                except Exception as e:
+                    print(f"[parser] 第 {idx + 1} 页 OCR 失败（跳过）: {e}")
+                    continue
+                if text.strip():
+                    texts[idx] = text.strip()
+
+        for idx, text in enumerate(texts):
+            result.pages.append(PageText(page_index=idx, text=text))
     finally:
         doc.close()  # 释放资源
     return result
@@ -80,20 +115,39 @@ def _get_ocr_engine():
     return _ocr_engine
 
 
+def _ocr_text(image_path: str) -> str:
+    """对单张图片做 OCR，返回识别文本（空字符串表示无文字）"""
+    engine = _get_ocr_engine()
+    output = engine(image_path)  # rapidocr 3.x 返回 RapidOCROutput 对象
+    # 新包识别文本在 .txts（元组），旧包是 (results, elapsed) 元组
+    if isinstance(output, tuple):
+        output = output[0]
+    texts = getattr(output, "txts", None)
+    return "\n".join(t for t in texts if t) if texts else ""
+
+
+def _ocr_pdf_page(page, dpi: int) -> str:
+    """把 PDF 页面渲染成临时 PNG 后做 OCR（调用方负责按页控制数量）"""
+    pix = page.get_pixmap(dpi=dpi)
+    fd, tmp_path = tempfile.mkstemp(suffix=".png")
+    os.close(fd)
+    try:
+        pix.save(tmp_path)
+        return _ocr_text(tmp_path)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
 def parse_ocr(image_path: str) -> ParseResult:
     """解析图片/扫描件：rapidocr 识别，失败时返回空结果（降级提示）"""
     result = ParseResult()
     try:
-        engine = _get_ocr_engine()
-        output = engine(image_path)  # rapidocr 3.x 返回 RapidOCROutput 对象
-        # 新包识别文本在 .txts（元组），旧包是 (results, elapsed) 元组
-        if isinstance(output, tuple):
-            output = output[0]
-        texts = getattr(output, "txts", None)
-        if texts:
-            result.pages.append(
-                PageText(page_index=0, text="\n".join(texts))
-            )
+        text = _ocr_text(image_path)
+        if text.strip():
+            result.pages.append(PageText(page_index=0, text=text))
     except Exception as e:
         # 降级：识别失败不抛异常，返回空，由调用方提示
         print(f"[parser] OCR 识别失败（降级）: {e}")
@@ -108,11 +162,18 @@ def parse_file(src_path: str) -> ParseResult:
     ext = os.path.splitext(src_path)[1].lower()
 
     if ext == ".pdf":
-        return parse_pdf(src_path)
-    if ext == ".docx":
-        return parse_docx(src_path)
+        result = parse_pdf(src_path)
+    elif ext == ".docx":
+        result = parse_docx(src_path)
     # 常见图片格式走 OCR
-    if ext in (".jpg", ".jpeg", ".png", ".bmp"):
-        return parse_ocr(src_path)
+    elif ext in (".jpg", ".jpeg", ".png", ".bmp"):
+        result = parse_ocr(src_path)
+    else:
+        raise ValueError(f"不支持的格式: {ext}（支持 pdf/docx/图片）")
 
-    raise ValueError(f"不支持的格式: {ext}（支持 pdf/docx/图片）")
+    # 统一兜底：无任何可检索文本视为解析失败，避免「状态 parsed 但问答报未解析」
+    if not any(p.text.strip() for p in result.pages):
+        raise ValueError(
+            "未能从文档中提取到文本（可能是扫描件、图片识别失败或空文件）"
+        )
+    return result
